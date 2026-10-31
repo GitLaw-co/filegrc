@@ -14,7 +14,8 @@ import { extname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { getResourceDefinition } from "../model/index.js";
 import { hostedAutomationForConnection, OPERATING_HOSTED_AUTOMATION } from "./hosted-automation.js";
-import { createHostedAuth, hostedAuthFromEnv } from "./hosted-auth.js";
+import { createHostedAuth, hostedAuthFromEnv, verifySession } from "./hosted-auth.js";
+import { completeOwnAttestation, listOwedAttestations, readResourceContent } from "./resource-mutation.js";
 import { prepareAuditWorkspace } from "./audit-preparation.js";
 import { saveAuditPopulation, scaffoldAuditPopulationCorrection } from "./audit-populations.js";
 import { activateDocuments, activateGovernedContent } from "./document-activation.js";
@@ -88,7 +89,7 @@ import {
 } from "./workflow.js";
 import { scaffoldNonmaterialAmendment, saveNonmaterialAmendment } from "./nonmaterial-amendments.js";
 import { loadWorkspace } from "./workspace.js";
-import { APP_SCRIPT, APP_STYLES, renderIndex } from "./web.js";
+import { APP_SCRIPT, APP_STYLES, renderAcknowledgementsPage, renderIndex } from "./web.js";
 import { assertWorkspaceEngineVersion } from "./runtime-version.js";
 
 const STATE_SESSION_MAX_AGE_MS = 5 * 60_000;
@@ -130,7 +131,12 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         return json(response, 403, { error: "The request host is not allowed." });
       }
       const url = new URL(request.url, "http://localhost");
-      if (hostedAuth && await hostedAuth.handle(request, response, url)) return;
+      // Completing one's own acknowledgement is hosted mode's only write.
+      const attestingPersonId = hostedAuth && url.pathname === "/acknowledgements"
+        ? verifySession(sessionCookie(request), options.hostedAuth.sessionSecret)?.personId
+        : null;
+      if (hostedAuth && !(attestingPersonId && request.method === "POST")
+        && await hostedAuth.handle(request, response, url)) return;
       const requestOptions = {
         ...options,
         programId: url.searchParams.get("programId") || undefined,
@@ -155,6 +161,9 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       };
       if (["POST", "PUT", "DELETE"].includes(request.method) && !sameOrigin(request)) {
         return json(response, 403, { error: "Cross-origin writes are not allowed." });
+      }
+      if (attestingPersonId && ["GET", "POST"].includes(request.method)) {
+        return await acknowledgements(input, request, response, url, attestingPersonId, requestOptions);
       }
       if (request.method === "GET" && url.pathname === "/api/state") {
         if (timingEnabled()) {
@@ -890,6 +899,49 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
   return server;
 }
 
+// A form post redirects back to the page; a JSON `{ record, content }` post
+// gets the created record. Either way the session names the attesting person.
+async function acknowledgements(input, request, response, url, personId, requestOptions) {
+  const page = async (status, extra = {}) => {
+    const loaded = await loadWorkspace(input);
+    const items = await Promise.all((await listOwedAttestations(loaded, personId)).map(async (item) => {
+      const content = await readResourceContent(loaded, loaded.resources.find(({ id }) => id === item.subjectId));
+      return { ...item, content: Object.values(content).map(({ source }) => source).join("\n\n") };
+    }));
+    const person = loaded.resources.find(({ id }) => id === personId);
+    return text(response, status, renderAcknowledgementsPage({ person, items, ...extra }), "text/html; charset=utf-8");
+  };
+  if (request.method === "GET") return page(200, { done: url.searchParams.get("done") });
+  const asJson = String(request.headers["content-type"] || "").startsWith("application/json");
+  try {
+    const payload = asJson
+      ? await readJson(request)
+      : { record: { subjectResourceIds: [new URLSearchParams(await readForm(request)).get("subjectResourceId")] } };
+    const result = await browserMutation(input, requestOptions, {
+      message: ({ record }) => `Record attestation: ${record.title} (${record.personId})`,
+      fastResponse: true
+    }, () => completeOwnAttestation(input, personId, payload));
+    if (asJson) return json(response, 201, result);
+    response.writeHead(303, {
+      location: `/acknowledgements?done=${encodeURIComponent(result.record.subjectResourceIds[0])}`,
+      "cache-control": "no-store"
+    });
+    return response.end();
+  } catch (error) {
+    if (asJson) throw error;
+    const status = statusFor(error);
+    return page(status, { error: publicErrorMessage(error, status) });
+  }
+}
+
+function sessionCookie(request) {
+  for (const part of String(request.headers.cookie ?? "").split(";")) {
+    const index = part.indexOf("=");
+    if (index > 0 && part.slice(0, index).trim() === "filegrc_session") return part.slice(index + 1).trim();
+  }
+  return null;
+}
+
 async function stableStateSnapshot(input, options) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const first = await fingerprintWorkspace(input, {
@@ -1412,6 +1464,17 @@ async function readJson(request) {
     throw new Error("The JSON request body must be an object.");
   }
   return value;
+}
+
+async function readForm(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 2_000_000) throw new Error("Request body exceeds 2 MB.");
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function readBytes(request) {
