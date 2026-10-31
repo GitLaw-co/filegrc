@@ -1,2 +1,3 @@
 - 2026-10-31 Nick: Yes, as recommended - the card is the spec: check record holds the definition, each run's result is dated evidence. Rebase on main right before the PR.
 - 2026-10-31 Nick: Yes, as recommended - the card is the spec. Rerunnable, never overwrites existing risks.
+- 2026-10-31 Nick: Yes, as recommended - the card is the spec. Opt-in A1/C1, default starter stays Security-only.
