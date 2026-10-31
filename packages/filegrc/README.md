@@ -92,6 +92,22 @@ The package requires Node.js 20 or newer. It uses Git for authors, commit timest
 
 The editable server has no authentication and binds to loopback by default. Put it behind trusted authentication before exposing it on a network, or publish the read-only static build.
 
+### Hosted mode with Google sign-in
+
+Hosted mode puts Google sign-in in front of every page and API route. It is off unless all five variables are set; setting only some of them stops the server from starting.
+
+| Variable | Value |
+| --- | --- |
+| `FILEGRC_GOOGLE_CLIENT_ID` | OAuth 2.0 web client ID from Google Cloud. |
+| `FILEGRC_GOOGLE_CLIENT_SECRET` | The client's secret. |
+| `FILEGRC_ALLOWED_EMAIL_DOMAIN` | The one email domain that may sign in, such as `example.com`. |
+| `FILEGRC_SESSION_SECRET` | At least 32 random characters used to sign session cookies. |
+| `FILEGRC_PUBLIC_URL` | The HTTPS address people open, such as `https://grc.example.com`. Register `<FILEGRC_PUBLIC_URL>/auth/callback` as the client's redirect URI. |
+
+A person can sign in only when Google reports a verified email in the allowed domain and an `active` Person record has the same `email`. Anyone else gets a 403 page and no session. The session is an HMAC-signed `HttpOnly`, `Secure`, `SameSite=Lax` cookie that lasts 8 hours; nothing is stored on disk or under `data/`. Changing `FILEGRC_SESSION_SECRET` signs everyone out. Open `/auth/logout` to sign out.
+
+Signed-in people can read the program but cannot change it: hosted mode rejects every write with 403, except one. At `/acknowledgements` a signed-in person sees the approved Training, Policies, and Documents that program readiness says they still owe, reads each one, and confirms it. The server creates one completed `git-approval` Attestation for the signed-in Person, bound to the subject's current content revision, and commits only that file to the authoritative branch through the normal trunk browser write, then pushes it. The request cannot choose the Person. The commit uses the server's Git identity; the message names the Person. A JSON `POST /acknowledgements` with `{ "record": { "subjectResourceIds": ["<id>"] } }` does the same and returns the created record. Serve over HTTPS, for example behind a TLS reverse proxy, because browsers drop `Secure` cookies on plain HTTP.
+
 The authoritative data model ships in this package. Import the public Node.js API from `filegrc` and the model loader from `filegrc/model`.
 
 ## Workflow notification contacts

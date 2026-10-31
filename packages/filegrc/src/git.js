@@ -2279,6 +2279,7 @@ async function runTrunkMutationUnlocked(root, config, options, task) {
       commitValidatedIndexAsync(root, subject, validatedManifest, {
         expectedParent: synchronized.currentCommit,
         expectedRef,
+        author: options?.author,
       }),
     ));
   } catch (error) {
@@ -3672,6 +3673,7 @@ async function commitValidatedIndexAsync(root, subject, manifest, options) {
       {
         operation: "create the validated FileGRC browser commit",
         timeoutMs: GIT_REMOTE_TIMEOUT_MS,
+        gitEnv: commitAuthorEnvironment(options.author),
       },
     );
     assertNoGitOperationInProgress(root);
@@ -3703,6 +3705,18 @@ async function commitValidatedIndexAsync(root, subject, manifest, options) {
       ].map((cleanup) => cleanup.catch(() => undefined)),
     );
   }
+}
+
+// A signed-in person authors their own commit; the server's Git identity
+// stays the committer.
+export function commitAuthorEnvironment(author) {
+  if (!author) return {};
+  const name = String(author.name ?? "").trim();
+  const email = String(author.email ?? "").trim();
+  if (!name || !email || /[<>\u0000-\u001f\u007f]/.test(name + email)) {
+    throw new Error("The commit author needs a safe Git name and email address.");
+  }
+  return { GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email };
 }
 
 function replaceSharedIndexIfUnchanged(sharedIndex, privateIndex, expected) {
@@ -4099,6 +4113,7 @@ function runGitCommandNative(cwd, args, options = {}) {
         ...(options.gitIndexFile
           ? { GIT_INDEX_FILE: options.gitIndexFile }
           : {}),
+        ...options.gitEnv,
         GIT_TERMINAL_PROMPT: "0",
         GIT_ASKPASS: "",
         SSH_ASKPASS: "",
@@ -4402,6 +4417,7 @@ function gitForWrite(cwd, args, action = "create the commit", options = {}) {
         ...(options.gitIndexFile
           ? { GIT_INDEX_FILE: options.gitIndexFile }
           : {}),
+        ...options.gitEnv,
         GIT_TERMINAL_PROMPT: "0",
         GIT_MERGE_AUTOEDIT: "no",
       }),
