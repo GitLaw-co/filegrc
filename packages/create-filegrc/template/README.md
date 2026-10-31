@@ -44,6 +44,8 @@ The goal is a program running in days and supported responses in minutes. Actual
 
 The Work Queue connects recurring reviews, policy events, owners, and deadlines. Readiness checks show missing work before an evidence period or audit, while evidence packets bring together records, attachments, Git history, and indexes.
 
+Define an automated check once and record each run's pass or fail result as dated evidence. Program readiness shows the latest result on each linked control.
+
 [![FileGRC audit readiness](docs/filegrc-audit.png)](https://filegrc.com)
 
 Optional [FileGRC Autopilot](https://app.filegrc.com/guide) adds hosted owner reminders and policy-driven escalation when the local app is closed. The local software remains free; audit fees, source systems, and paid services are separate.

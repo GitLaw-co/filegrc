@@ -1,0 +1,1 @@
+- 2026-10-31 builder: A resource type added to the active model v13 must also be excluded from the comprehensive test fixture in `packages/filegrc/test/fixtures.js`; tests relabel that fixture's Git history as model v11/v12, and reconciliation rejects records whose type the historical model lacks (precedent: `retention-application` in 7ad9d17).
