@@ -1,0 +1,1 @@
+- 2026-10-31 Nick: Yes, as recommended - the card is the spec. Build the opt-in serve flag with Google sign-in limited to one email domain, reading the OAuth client ID/secret from env vars; test with a stub. I'll create the OAuth client separately - don't wait for it.

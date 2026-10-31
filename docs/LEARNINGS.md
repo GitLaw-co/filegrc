@@ -1,0 +1,1 @@
+- 2026-10-31 builder: `loadWorkspace().resources` holds plain records (`record.type`, `record.email`), not `{ record, path }` entries; and a full `npm run validate` runs longer than 10 minutes on the build machine, so a 10-minute tool call cannot finish it.
