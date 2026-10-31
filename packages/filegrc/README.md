@@ -92,6 +92,8 @@ The package requires Node.js 20 or newer. It uses Git for authors, commit timest
 
 The editable server has no authentication and binds to loopback by default. Put it behind trusted authentication before exposing it on a network, or publish the read-only static build.
 
+To let an auditor browse an audit at a Git tag, `POST /api/auditor-links` with `{ "tag": "audit-2026", "auditId": "audit-id", "hours": 24 }`. The response URL opens a read-only page built from the evidence-packet indexes at the commit the tag named when the link was issued, organised by the Audit's control tests. Later commits and moved tags do not change it. Links are HMAC-signed over path, commit, and expiry, last 1 to 168 hours, and stop working when the server restarts. Evidence file links on the page expire after one hour. Until the link expires, a browser that opened it receives `403` for every write and for every route outside the auditor view. The page lists the evidence management linked; it does not judge whether that evidence is sufficient.
+
 ### Hosted mode with Google sign-in
 
 Hosted mode puts Google sign-in in front of every page and API route. It is off unless all five variables are set; setting only some of them stops the server from starting.

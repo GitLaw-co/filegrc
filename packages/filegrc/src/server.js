@@ -23,6 +23,7 @@ import { createNextAuditCycle, planNextAuditCycle } from "./audit-transition.js"
 import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./batch-review.js";
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
+import { auditorRequestDenied, createAuditorView } from "./auditor-view.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -114,6 +115,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
   let stateMutationWaiters = [];
   const calculator = createStateCalculator();
   const hostedAuth = options.hostedAuth ? createHostedAuth(input, options.hostedAuth) : null;
+  const auditorView = createAuditorView(input, { secret: options.auditorSecret, now: options.now });
   const server = createHttpServer(async (request, response) => {
     const requestStarted = performance.now();
     if (timingEnabled()) {
@@ -132,6 +134,9 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         return json(response, 403, { error: "The request host is not allowed." });
       }
       const url = new URL(request.url, "http://localhost");
+      if (auditorRequestDenied(request, url)) {
+        return json(response, 403, { error: "Auditor access is read-only and limited to the auditor view." });
+      }
       // Completing one's own acknowledgement is hosted mode's only write.
       const attestingPersonId = hostedAuth && url.pathname === "/acknowledgements"
         ? verifySession(sessionCookie(request), options.hostedAuth.sessionSecret)?.personId
@@ -636,6 +641,18 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         }));
         return json(response, 200, result);
       }
+      if (request.method === "POST" && url.pathname === "/api/auditor-links") {
+        return json(response, 201, await auditorView.createLink(await readJson(request)));
+      }
+      if (request.method === "GET" && url.pathname.startsWith("/auditor/")) {
+        const result = await auditorView.respond(url);
+        if (result.html) {
+          response.setHeader("set-cookie", result.cookie);
+          return text(response, 200, result.html, "text/html; charset=utf-8");
+        }
+        if (result.file) return text(response, 200, result.file, packetContentType(result.path));
+        return json(response, result.status, { error: result.error });
+      }
       if (request.method === "GET" && url.pathname === "/api/evidence-packet") {
         return json(response, 200, await prepareEvidencePacket(input, {
           start: url.searchParams.get("start"),
@@ -896,7 +913,10 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       json(response, status, { error: publicErrorMessage(error, status) });
     }
   });
-  server.once("close", () => calculator.close());
+  server.once("close", () => {
+    calculator.close();
+    auditorView.close();
+  });
   return server;
 }
 
