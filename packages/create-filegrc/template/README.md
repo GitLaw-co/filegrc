@@ -46,6 +46,8 @@ The Work Queue connects recurring reviews, policy events, owners, and deadlines.
 
 Define an automated check once and record each run's pass or fail result as dated evidence. Program readiness shows the latest result on each linked control.
 
+Move an existing risk register in with `npx filegrc import-risks register.csv --preview`, then `--apply`. A risk with one score gets its rating band and stays marked for likelihood and impact rating. Each risk records the source file and import date. Rerunning skips risks that already exist.
+
 [![FileGRC audit readiness](docs/filegrc-audit.png)](https://filegrc.com)
 
 Optional [FileGRC Autopilot](https://app.filegrc.com/guide) adds hosted owner reminders and policy-driven escalation when the local app is closed. The local software remains free; audit fees, source systems, and paid services are separate.
