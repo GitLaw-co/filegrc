@@ -157,6 +157,17 @@ test("a matching person gets a signed session cookie and read-only access; a tam
 
   const page = await fetch(url, { redirect: "manual", headers: { cookie: `filegrc_session=${session.value}` } });
   assert.equal(page.status, 200);
+  const signedIn = { cookie: `filegrc_session=${session.value}` };
+  const state = await fetch(`${url}/api/state`, { headers: signedIn });
+  assert.equal(state.status, 200);
+  assert.equal((await state.json()).readOnly, true);
+  const bootstrap = await (await fetch(`${url}/api/state/bootstrap`, {
+    headers: { ...signedIn, "sec-fetch-site": "same-origin" }
+  })).json();
+  const repository = await (await fetch(`${url}/api/state/repository?token=${bootstrap.stateToken}`, { headers: signedIn })).json();
+  assert.equal(repository.state.readOnly, true);
+  const syncStatus = await fetch(`${url}/api/git/sync-status`, { headers: signedIn });
+  assert.equal((await syncStatus.json()).readOnly, true);
   const write = await fetch(`${url}/api/resources/person`, {
     method: "POST",
     headers: { cookie: `filegrc_session=${session.value}`, "content-type": "application/json" },

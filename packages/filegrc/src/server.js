@@ -159,6 +159,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       if (request.method === "GET" && url.pathname === "/api/state") {
         if (timingEnabled()) {
           const { result, timings } = await collectTimings(() => measureTiming("state", () => createAppState(input, {
+            readOnly: Boolean(hostedAuth),
             allowNonAuthoritativeWrites: options.allowNonAuthoritativeWrites,
             programId: requestOptions.programId,
             includeDetails: false
@@ -167,6 +168,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
           return json(response, 200, result);
         }
         return json(response, 200, await createAppState(input, {
+          readOnly: Boolean(hostedAuth),
           allowNonAuthoritativeWrites: options.allowNonAuthoritativeWrites,
           programId: requestOptions.programId,
           includeDetails: false
@@ -736,7 +738,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         return json(response, 200, {
           repository,
           git,
-          readOnly: repository.mode === "trunk" && !repository.writesAllowed
+          readOnly: Boolean(options.hostedAuth) || (repository.mode === "trunk" && !repository.writesAllowed)
         });
       }
       if (request.method === "GET" && url.pathname === "/api/review-revisions") {
@@ -1084,6 +1086,7 @@ async function loadStateSessionSection(session, section, serverOptions, programI
           ])
         : [repository?.validation, null];
       const calculationOptions = {
+        readOnly: Boolean(serverOptions.hostedAuth),
         allowNonAuthoritativeWrites: serverOptions.allowNonAuthoritativeWrites,
         repositorySnapshot,
         generatedAt: session.generatedAt,
