@@ -14,6 +14,7 @@ import { extname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { getResourceDefinition } from "../model/index.js";
 import { hostedAutomationForConnection, OPERATING_HOSTED_AUTOMATION } from "./hosted-automation.js";
+import { createHostedAuth, hostedAuthFromEnv } from "./hosted-auth.js";
 import { prepareAuditWorkspace } from "./audit-preparation.js";
 import { saveAuditPopulation, scaffoldAuditPopulationCorrection } from "./audit-populations.js";
 import { activateDocuments, activateGovernedContent } from "./document-activation.js";
@@ -110,6 +111,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
   let activeStateMutations = 0;
   let stateMutationWaiters = [];
   const calculator = createStateCalculator();
+  const hostedAuth = options.hostedAuth ? createHostedAuth(input, options.hostedAuth) : null;
   const server = createHttpServer(async (request, response) => {
     const requestStarted = performance.now();
     if (timingEnabled()) {
@@ -128,6 +130,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         return json(response, 403, { error: "The request host is not allowed." });
       }
       const url = new URL(request.url, "http://localhost");
+      if (hostedAuth && await hostedAuth.handle(request, response, url)) return;
       const requestOptions = {
         ...options,
         programId: url.searchParams.get("programId") || undefined,
@@ -156,6 +159,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       if (request.method === "GET" && url.pathname === "/api/state") {
         if (timingEnabled()) {
           const { result, timings } = await collectTimings(() => measureTiming("state", () => createAppState(input, {
+            readOnly: Boolean(hostedAuth),
             allowNonAuthoritativeWrites: options.allowNonAuthoritativeWrites,
             programId: requestOptions.programId,
             includeDetails: false
@@ -164,6 +168,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
           return json(response, 200, result);
         }
         return json(response, 200, await createAppState(input, {
+          readOnly: Boolean(hostedAuth),
           allowNonAuthoritativeWrites: options.allowNonAuthoritativeWrites,
           programId: requestOptions.programId,
           includeDetails: false
@@ -733,7 +738,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         return json(response, 200, {
           repository,
           git,
-          readOnly: repository.mode === "trunk" && !repository.writesAllowed
+          readOnly: Boolean(options.hostedAuth) || (repository.mode === "trunk" && !repository.writesAllowed)
         });
       }
       if (request.method === "GET" && url.pathname === "/api/review-revisions") {
@@ -916,6 +921,7 @@ export async function serveWorkspace(input = process.cwd(), options = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65_535) {
     throw new Error("The server port must be an integer from 0 through 65535.");
   }
+  const hostedAuth = options.hostedAuth ?? hostedAuthFromEnv(options.env ?? process.env);
   let startupSynchronization;
   try {
     startupSynchronization = await synchronizeBrowserStartup(input, {
@@ -931,7 +937,8 @@ export async function serveWorkspace(input = process.cwd(), options = {}) {
   const loaded = await loadWorkspace(input);
   getResourceDefinition(loaded.model, "workspace");
   const server = createFilegrcServer(loaded.root, {
-    allowedHosts: [host],
+    allowedHosts: hostedAuth ? [host, new URL(hostedAuth.publicUrl).hostname] : [host],
+    hostedAuth,
     allowNonAuthoritativeWrites: options.allowNonAuthoritativeWrites === true,
     backgroundPushDelayMs: options.backgroundPushDelayMs,
     stateSectionDeadlineMs: options.stateSectionDeadlineMs,
@@ -1079,6 +1086,7 @@ async function loadStateSessionSection(session, section, serverOptions, programI
           ])
         : [repository?.validation, null];
       const calculationOptions = {
+        readOnly: Boolean(serverOptions.hostedAuth),
         allowNonAuthoritativeWrites: serverOptions.allowNonAuthoritativeWrites,
         repositorySnapshot,
         generatedAt: session.generatedAt,
