@@ -14,6 +14,7 @@ import {
 import { HOSTED_AUTOMATION, OPERATING_HOSTED_AUTOMATION } from "./hosted-automation.js";
 import { PROGRAM_PATH, programPathForModel, RESOURCE_INSTRUCTIONS, RESOURCE_OUTPUTS, RESOURCE_PAGE_SUMMARIES } from "./program-path.js";
 import { formatCalendarDate, formatLocalDateTime } from "./time.js";
+import { escapeHtml, renderMarkdown } from "./markdown.js";
 
 export function dashboardProgramReadiness(programReadiness = {}) {
   const progress = programReadiness.progress || {};
@@ -85,6 +86,43 @@ export function resolveWorkflowDestination(destination, options = {}) {
     return `#/resources/${type}${create ? "?new=1" : ""}`;
   }
   return "";
+}
+
+// Hosted mode's one write page: the signed-in person reads each owed subject
+// and confirms it. The server decides who is attesting; the form names only the subject.
+export function renderAcknowledgementsPage({ person, items = [], done = null, error = null }) {
+  const doneItem = done ? `<p class="panel" role="status">Recorded. Your acknowledgement is committed to the program repository.</p>` : "";
+  const errorItem = error ? `<p class="panel dialog-error" role="alert">${escapeHtml(error)}</p>` : "";
+  const sections = items.map((item) => `<section class="panel" aria-labelledby="ack-${escapeHtml(item.subjectId)}">
+    <p class="kicker">${item.attestationKind === "training" ? "Training" : "Acknowledgement"}</p>
+    <h3 id="ack-${escapeHtml(item.subjectId)}">${escapeHtml(item.title)}</h3>
+    <div class="markdown">${renderMarkdown(item.content || "")}</div>
+    <form method="post" action="/acknowledgements">
+      <input type="hidden" name="subjectResourceId" value="${escapeHtml(item.subjectId)}">
+      <button class="button primary" type="submit">I have ${item.attestationKind === "training" ? "completed" : "read and acknowledge"} ${escapeHtml(item.title)}</button>
+    </form>
+  </section>`).join("\n");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My acknowledgements · FileGRC</title>
+  <link rel="stylesheet" href="./filegrc.css">
+</head>
+<body>
+  <main id="main" class="page">
+    <div class="page-intro"><div>
+      <p class="kicker">${escapeHtml(person?.title || "Signed in")}</p>
+      <h2>My acknowledgements</h2>
+      <p>Read each item, then confirm it. FileGRC records a dated Attestation bound to the exact content you read.</p>
+    </div></div>
+    ${errorItem}${doneItem}
+    ${sections || `<p class="empty">You have nothing to acknowledge right now.</p>`}
+    <p><a href="/">Open the program</a> · <a href="/auth/logout">Sign out</a></p>
+  </main>
+</body>
+</html>`;
 }
 
 export function renderIndex(state = null) {

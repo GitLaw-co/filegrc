@@ -42,6 +42,43 @@ export const REQUIRED_SOC2_SECURITY_REFERENCES = [
   "CC9.2"
 ];
 
+// Optional Trust Services Categories are never starter records. Setup creates
+// them only when the Program selects the category. Titles and descriptions are
+// paraphrased for mapping; the publisher's text stays authoritative.
+export const SOC2_OPTIONAL_CATEGORY_REQUIREMENTS = {
+  availability: [
+    ["A1.1", "Capacity management", "Monitor and manage processing capacity and demand so the system can meet its availability commitments."],
+    ["A1.2", "Recovery infrastructure", "Protect, back up, and maintain the environmental and recovery infrastructure that supports availability commitments."],
+    ["A1.3", "Recovery testing", "Test the procedures used to recover the system and confirm they support availability commitments."]
+  ],
+  confidentiality: [
+    ["C1.1", "Confidential information protection", "Identify confidential information and protect it according to confidentiality commitments."],
+    ["C1.2", "Confidential information disposal", "Dispose of confidential information when confidentiality commitments require it."]
+  ]
+};
+
+export const SOC2_OPTIONAL_CATEGORIES = Object.keys(SOC2_OPTIONAL_CATEGORY_REQUIREMENTS);
+
+export function soc2CategoryRequirementRecords(category, frameworkId, existingRequirements = []) {
+  const catalogue = SOC2_OPTIONAL_CATEGORY_REQUIREMENTS[category];
+  if (!catalogue) throw new Error(`Trust Services Category must be one of ${SOC2_OPTIONAL_CATEGORIES.join(", ")}.`);
+  const existing = new Set(existingRequirements
+    .filter((record) => record.frameworkId === frameworkId)
+    .map(({ reference }) => String(reference || "").trim().toUpperCase()));
+  return catalogue
+    .filter(([reference]) => !existing.has(reference))
+    .map(([reference, name, description]) => ({
+      id: `requirement-soc2-${reference.toLowerCase().replace(".", "-")}`,
+      type: "requirement",
+      title: `${reference}: ${name}`,
+      frameworkId,
+      reference,
+      description,
+      tags: [category],
+      externalIds: { "aicpa.tsc": reference }
+    }));
+}
+
 const SOC2_PROGRAM_GOALS = new Set([
   "readiness",
   "soc-2-type-1",

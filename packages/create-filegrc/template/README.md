@@ -25,7 +25,7 @@ Use the local web app, your editor, or an agent. They work with the same files a
 
 [![FileGRC SOC 2 program overview](docs/filegrc-home.png)](https://filegrc.com)
 
-FileGRC guides you through scope, policy approval, control implementation, ongoing work, and audit preparation. Start with a Security-focused SOC 2 program, then expand when your scope calls for it. Starter records are proposals to review against how your company actually works.
+FileGRC guides you through scope, policy approval, control implementation, ongoing work, and audit preparation. Start with a Security-focused SOC 2 program, then expand when your scope calls for it. Add `"trustServicesCategories": ["availability", "confidentiality"]` to the `npx filegrc setup` payload to create the A1 or C1 criteria for your applicability decisions. Starter records are proposals to review against how your company actually works.
 
 ## Give your agents the whole picture
 
@@ -43,6 +43,12 @@ The goal is a program running in days and supported responses in minutes. Actual
 ## Stay ready as the program runs
 
 The Work Queue connects recurring reviews, policy events, owners, and deadlines. Readiness checks show missing work before an evidence period or audit, while evidence packets bring together records, attachments, Git history, and indexes.
+
+Define an automated check once and record each run's pass or fail result as dated evidence. Program readiness shows the latest result on each linked control.
+
+Collect GitHub results with `GITHUB_TOKEN=... npx filegrc collect github --org your-org --repos your-org/app --preview`, then `--apply`. It checks that the organization requires two-factor authentication and that each repository protects its default branch, and records each result as evidence naming the source component and the person who ran it. The token stays in the environment and is never written to the repository. FileGRC runs a collector only when you run this command.
+
+Move an existing risk register in with `npx filegrc import-risks register.csv --preview`, then `--apply`. A risk with one score gets its rating band and stays marked for likelihood and impact rating. Each risk records the source file and import date. Rerunning skips risks that already exist.
 
 [![FileGRC audit readiness](docs/filegrc-audit.png)](https://filegrc.com)
 

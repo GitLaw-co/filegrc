@@ -168,7 +168,7 @@ Relationship fields use the named groups below. The registry expands each group 
 | `obligation-template` | `person`, `system`, `asset`, `document`, `control`, `policy`, `training`, `retention-schedule-item`, `requirement-mapping` |
 | `completion-record` | `access-grant`, `asset`, `control`, `document`, `evidence`, `control-test`, `finding`, `exception`, `action-item`, `policy-review`, `policy`, `attestation`, `meeting`, `risk-assessment`, `risk`, `vendor`, `vendor-review`, `access-review`, `vulnerability-scan`, `incident`, `exercise`, `backup-test`, `penetration-test`, `data-request`, `audit-population`, `audit-request`, `source-coverage`, `control-activity`, `retention-schedule-item`, `requirement-mapping` |
 | `event-subject` | `person`, `appointment`, `service-account`, `team`, `system`, `asset`, `document`, `policy`, `training`, `vendor`, `access-grant`, `vulnerability`, `incident`, `exception` |
-| `evidence-source-record` | `appointment`, `document`, `obligation`, `obligation-event`, `requirement`, `commitment`, `complementary-control`, `control`, `control-test`, `finding`, `exception`, `action-item`, `policy`, `policy-review`, `attestation`, `meeting`, `training`, `risk`, `risk-assessment`, `vendor`, `vendor-review`, `access-grant`, `access-review`, `vulnerability`, `vulnerability-scan`, `incident`, `exercise`, `backup-test`, `penetration-test`, `data-request`, `audit`, `audit-population`, `audit-request`, `source-coverage`, `control-activity`, `retention-schedule-item`, `requirement-mapping`, `obligation-rule`, `obligation-occurrence`, `reporting-route`, `reporting-route-set` |
+| `evidence-source-record` | `appointment`, `document`, `obligation`, `obligation-event`, `requirement`, `commitment`, `complementary-control`, `control`, `control-test`, `finding`, `exception`, `action-item`, `policy`, `policy-review`, `attestation`, `meeting`, `training`, `risk`, `risk-assessment`, `vendor`, `vendor-review`, `access-grant`, `access-review`, `vulnerability`, `vulnerability-scan`, `incident`, `exercise`, `backup-test`, `penetration-test`, `data-request`, `audit`, `audit-population`, `audit-request`, `source-coverage`, `control-activity`, `automated-check`, `retention-schedule-item`, `requirement-mapping`, `obligation-rule`, `obligation-occurrence`, `reporting-route`, `reporting-route-set` |
 | `work-source` | `control`, `control-test`, `finding`, `exception`, `obligation`, `obligation-event`, `policy-review`, `meeting`, `risk`, `risk-assessment`, `vendor-review`, `access-review`, `vulnerability-scan`, `incident`, `exercise`, `backup-test`, `penetration-test`, `data-request`, `audit`, `audit-population`, `audit-request`, `source-coverage`, `control-activity`, `retention-schedule-item`, `requirement-mapping`, `obligation-rule`, `obligation-occurrence`, `reporting-route`, `reporting-route-set` |
 | `work-blocker` | `person`, `appointment`, `team`, `system`, `asset`, `document`, `evidence`, `obligation`, `obligation-event`, `control`, `control-test`, `finding`, `exception`, `action-item`, `policy`, `policy-review`, `training`, `risk`, `risk-assessment`, `vendor`, `vendor-review`, `access-grant`, `access-review`, `vulnerability`, `vulnerability-scan`, `incident`, `exercise`, `backup-test`, `penetration-test`, `data-request`, `audit`, `audit-population`, `audit-request`, `source-coverage`, `control-activity`, `retention-schedule-item`, `requirement-mapping`, `obligation-rule`, `obligation-occurrence`, `reporting-route`, `reporting-route-set` |
 
@@ -2475,7 +2475,7 @@ Markdown companions:
 | `verifierIds` | array of id | Conditional | References: `person` Required when `status` is `verified`. |
 | `verifiedOn` | date | Conditional | Required when `status` is `verified`. |
 | `expiresOn` | date | No |  |
-| `sourceResourceIds` | array of id | No | Relation group: `evidence-source-record`. References: `appointment`, `document`, `obligation`, `obligation-event`, `requirement`, `commitment`, `complementary-control`, `control`, `control-test`, `finding`, `exception`, `action-item`, `policy`, `policy-review`, `attestation`, `meeting`, `training`, `risk`, `risk-assessment`, `vendor`, `vendor-review`, `access-grant`, `access-review`, `vulnerability`, `vulnerability-scan`, `incident`, `exercise`, `backup-test`, `penetration-test`, `data-request`, `audit`, `audit-population`, `audit-request`, `source-coverage`, `control-activity`, `retention-schedule-item`, `requirement-mapping`, `obligation-rule`, `obligation-occurrence`, `reporting-route`, `reporting-route-set` |
+| `sourceResourceIds` | array of id | No | Relation group: `evidence-source-record`. References: `appointment`, `document`, `obligation`, `obligation-event`, `requirement`, `commitment`, `complementary-control`, `control`, `control-test`, `finding`, `exception`, `action-item`, `policy`, `policy-review`, `attestation`, `meeting`, `training`, `risk`, `risk-assessment`, `vendor`, `vendor-review`, `access-grant`, `access-review`, `vulnerability`, `vulnerability-scan`, `incident`, `exercise`, `backup-test`, `penetration-test`, `data-request`, `audit`, `audit-population`, `audit-request`, `source-coverage`, `control-activity`, `automated-check`, `retention-schedule-item`, `requirement-mapping`, `obligation-rule`, `obligation-occurrence`, `reporting-route`, `reporting-route-set` |
 | `filePaths` | array of data-path | Conditional | Required when `sourceKind` is `file` and `status` is one of `collected`, `verified`, `withdrawn`. Allowed when `sourceKind` is one of `file`, `system`, `rendered-page`, `authored-record`, `component`. |
 | `externalReference` | object (`external-reference`) | Conditional | Required when `sourceKind` is `external-reference` and `status` is one of `collected`, `verified`, `withdrawn`. Allowed when `sourceKind` is one of `external-reference`, `system`, `component`. |
 | `sourceCommit` | string | Conditional | Required when `sourceKind` is `rendered-page` and `status` is one of `collected`, `verified`, `withdrawn`. |
@@ -2579,6 +2579,40 @@ Record Markdown: shown by default as an implicit companion file.
 | `ownerIds` | array of id | Yes | Owners Relation group: `accountable-party`. References: `person`, `team`, `appointment` |
 | `cancellation` | object (`cancellation`) | Conditional | Required when `status` is `canceled`. Allowed when `status` is `canceled`. |
 | `coverage` | object (`coverage-period`) | No | Work coverage |
+
+#### `automated-check`
+
+The definition of a repeatable machine check, such as a query or configuration test, that proves part of one or more Controls. Each run's pass or fail result is a dated Evidence Artifact that links the check.
+
+Instructions: The definition of a repeatable machine check, such as a query or configuration test, that proves part of one or more Controls. Each run's pass or fail result is a dated Evidence Artifact that links the check.
+
+Policy basis: The information security policy requires retained proof from authoritative Components. An automated check states what is tested and where; each retained run result is the proof.
+
+Timing: Define the check once. For each run, record an Evidence Artifact that lists this check in sourceResourceIds, names the same source Component, and records the run time and operating result.
+
+When reviewing:
+
+- Confirm the expected condition matches what the linked Controls require.
+- Confirm the source Component is where the check reads its data.
+- Confirm each run result is an Evidence Artifact with its run time and operating result.
+
+Default sources: `policy-information-security`
+
+Path: `data/automated-checks/<id>.json`
+
+Markdown companions:
+
+- **Check definition**: `.md` beside the JSON record (optional).
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `status` | enum | Yes | Values: `draft`, `active`, `retired` |
+| `controlIds` | array of id | Yes | Controls References: `control` |
+| `sourceComponentId` | id | Conditional | Source Component References: `component` Required when `status` is one of `active`, `retired`. |
+| `expectedCondition` | string | Conditional | Expected condition Required when `status` is one of `active`, `retired`. |
+| `cadence` | enum | Conditional | Run cadence Values: `continuous`, `hourly`, `daily`, `weekly`, `monthly`, `quarterly`, `on-change` Required when `status` is one of `active`, `retired`. |
+| `ownerIds` | array of id | No | Owners Relation group: `accountable-party`. References: `person`, `team`, `appointment` |
+| `retiredOn` | date | Conditional | Retired on Required when `status` is `retired`. Allowed when `status` is `retired`. |
 
 ### Issues and Remediation
 

@@ -2,6 +2,7 @@ import { modelSupports } from "../model/index.js";
 import { applyResourceBatch } from "./files.js";
 import { createResourceId } from "./id.js";
 import { resolveProgram, selectedRequirementIds } from "./program.js";
+import { SOC2_OPTIONAL_CATEGORIES, soc2CategoryRequirementRecords } from "./soc2.js";
 import { loadWorkspace } from "./workspace.js";
 
 const PROGRAM_GOALS = new Set(["none", "readiness", "type-1", "type-2"]);
@@ -24,6 +25,7 @@ export async function setupWorkspace(input = process.cwd(), payload = {}) {
   await applyResourceBatch(loaded.root, {
     create: [
       ...(plan.existingSystem ? [] : [plan.system]),
+      ...plan.requirements,
       ...(plan.commitment ? [plan.commitment] : [])
     ],
     update: updates,
@@ -38,6 +40,7 @@ export async function setupWorkspace(input = process.cwd(), payload = {}) {
     program: plan.target.type === "program" ? plan.target : null,
     renderer: plan.renderer,
     commitment: plan.commitment,
+    requirements: plan.requirements,
     linkedControlIds: [],
     onboardingComplete: !setup.draft
   };
@@ -58,12 +61,14 @@ export async function planWorkspaceSetup(input = process.cwd(), payload = {}) {
       [plan.target.type]: "update",
       renderer: plan.renderer ? "update" : "unchanged",
       controls: 0,
+      requirements: plan.requirements.length,
       commitment: plan.commitment ? "create" : "unchanged"
     },
     system: setupSystemSummary(plan.system),
     target: setupTargetSummary(plan.target, loaded.model),
     renderer: plan.renderer ? setupRendererSummary(plan.renderer) : null,
     commitment: plan.commitment || null,
+    requirementIds: plan.requirements.map(({ id }) => id),
     onboardingComplete: !setup.draft
   };
 }
@@ -77,6 +82,7 @@ export function summarizeSetupResult(result) {
       system: "saved",
       [result.program ? "program" : "workspace"]: "updated",
       controls: result.linkedControlIds?.length || 0,
+      requirements: result.requirements?.length || 0,
       commitment: result.commitment ? "saved" : "unchanged"
     },
     system: setupSystemSummary(result.system),
@@ -102,6 +108,7 @@ export function normalizeSetupPayload(payload = {}) {
     classificationId: cleanText(payload.classificationId, "classificationId"),
     internetExposed: booleanValue(payload.internetExposed, "internetExposed"),
     programGoal: cleanText(payload.programGoal ?? "none", "programGoal"),
+    trustServicesCategories: categoryList(payload.trustServicesCategories),
     draft,
     systemId: cleanOptionalText(payload.systemId, "systemId")
   };
@@ -124,6 +131,13 @@ function validateSetup(loaded, setup) {
   }
   if (!PROGRAM_GOALS.has(setup.programGoal)) {
     throw new Error(`programGoal must be one of ${[...PROGRAM_GOALS].join(", ")}.`);
+  }
+  const unknownCategories = setup.trustServicesCategories.filter((category) => !SOC2_OPTIONAL_CATEGORIES.includes(category));
+  if (unknownCategories.length) {
+    throw new Error(`trustServicesCategories may include only ${SOC2_OPTIONAL_CATEGORIES.join(", ")}. Security is always included.`);
+  }
+  if (setup.trustServicesCategories.length && !modelSupports(loaded.model, "program-scope")) {
+    throw new Error("Selecting Trust Services Categories requires Program scope. Upgrade the data model first.");
   }
   const owner = loaded.resources.find(({ id, type }) => id === setup.ownerId && type === "person");
   if (!owner || owner.status !== "active") throw new Error(`Active person "${setup.ownerId}" was not found.`);
@@ -203,11 +217,15 @@ function buildSetupRecords(loaded, setup) {
   };
   const existingWorkspace = loaded.resources.find(({ type }) => type === "workspace");
   if (!existingWorkspace) throw new Error("The workspace settings record was not found.");
+  const requirements = categoryRequirementRecords(loaded.resources, setup.trustServicesCategories);
   const nextTarget = {
     ...target,
     ...(!setup.draft && v4 ? { status: "active" } : {}),
     assuranceGoal: assuranceGoalFromSetup(setup.programGoal),
-    systemIds: [...new Set([...(target.systemIds || []), systemId])]
+    systemIds: [...new Set([...(target.systemIds || []), systemId])],
+    ...(requirements.frameworkId ? {
+      frameworkIds: [...new Set([...(target.frameworkIds || []), requirements.frameworkId])]
+    } : {})
   };
   const componentEntry = v4
     ? loaded.resources.find(({ id, type }) => id === "component-filegrc-program-repository" && type === "component")
@@ -255,7 +273,32 @@ function buildSetupRecords(loaded, setup) {
         ...(nextTarget.controlIds?.length ? { controlIds: [...nextTarget.controlIds] } : {})
       }
     : null;
-  return { existingSystem, system, workspace: existingWorkspace, target: nextTarget, component, renderer, commitment };
+  return {
+    existingSystem,
+    system,
+    workspace: existingWorkspace,
+    target: nextTarget,
+    component,
+    renderer,
+    commitment,
+    requirements: requirements.records
+  };
+}
+
+// Selected optional categories join the framework that holds the Security
+// Common Criteria, so one Framework carries every Trust Services criterion.
+function categoryRequirementRecords(resources, categories) {
+  if (!categories.length) return { frameworkId: null, records: [] };
+  const requirements = resources.filter(({ type }) => type === "requirement");
+  const frameworkId = requirements.find(({ reference }) => String(reference || "").trim().toUpperCase() === "CC1.1")?.frameworkId;
+  if (!frameworkId) {
+    throw new Error("Selecting Trust Services Categories requires a Framework that contains the Security Common Criteria (CC1.1).");
+  }
+  const usedIds = new Set(resources.map(({ id }) => id));
+  const records = categories.flatMap((category) => soc2CategoryRequirementRecords(category, frameworkId, requirements));
+  const taken = records.find(({ id }) => usedIds.has(id));
+  if (taken) throw new Error(`Requirement ID "${taken.id}" is already used by a record outside Framework "${frameworkId}".`);
+  return { frameworkId, records };
 }
 
 function assuranceGoalFromSetup(goal) {
@@ -288,6 +331,12 @@ function setupRendererSummary(renderer) {
     type: renderer.type,
     showOnboarding: renderer.showOnboarding
   };
+}
+
+function categoryList(value) {
+  if (value === undefined || value === null || value === "") return [];
+  const values = Array.isArray(value) ? value : String(value).split(",");
+  return [...new Set(values.map((category) => cleanText(category, "trustServicesCategories").toLowerCase()).filter(Boolean))];
 }
 
 function booleanValue(value, name) {
