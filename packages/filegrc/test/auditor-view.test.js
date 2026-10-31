@@ -113,10 +113,12 @@ test("serves the control tests as of the audit tag with expiring evidence links"
   assert.equal(created.status, 201);
   const link = await created.json();
   assert.equal(link.commit, tagged);
+  const auditorBase = new URL(link.url).origin;
+  assert.notEqual(auditorBase, base);
 
-  const view = await fetch(`${base}${link.url}`);
+  const view = await fetch(link.url);
   assert.equal(view.status, 200);
-  assert.match(view.headers.get("set-cookie"), /^filegrc-auditor=1; Path=\/; Max-Age=7200; HttpOnly; SameSite=Strict$/);
+  assert.equal(view.headers.get("set-cookie"), null);
   const html = await view.text();
   assert.match(html, /ACC-01 Quarterly access review/);
   assert.doesNotMatch(html, /Monthly access review/);
@@ -124,22 +126,22 @@ test("serves the control tests as of the audit tag with expiring evidence links"
   assert.match(html, /does not decide whether that evidence is sufficient/);
 
   const evidenceUrl = /href="([^"]+review\.csv[^"]*)"/.exec(html)[1].replaceAll("&amp;", "&");
-  const evidence = await fetch(`${base}${evidenceUrl}`);
+  const evidence = await fetch(`${auditorBase}${evidenceUrl}`);
   assert.equal(evidence.status, 200);
   assert.equal(await evidence.text(), "person,reviewed\nperson-owner,yes\n");
 
   const altered = evidenceUrl.replace("evidence-access-review-sample", "evidence-access-population");
-  assert.equal((await fetch(`${base}${altered}`)).status, 403);
-  assert.equal((await fetch(`${base}${link.url.replace("audit-2026", "audit-2027")}`)).status, 403);
+  assert.equal((await fetch(`${auditorBase}${altered}`)).status, 403);
+  assert.equal((await fetch(link.url.replace("audit-2026", "audit-2027"))).status, 403);
 
   advance(60 * 60_000 + 1);
-  assert.equal((await fetch(`${base}${evidenceUrl}`)).status, 403);
-  assert.equal((await fetch(`${base}${link.url}`)).status, 200);
+  assert.equal((await fetch(`${auditorBase}${evidenceUrl}`)).status, 403);
+  assert.equal((await fetch(link.url)).status, 200);
   advance(60 * 60_000);
-  assert.equal((await fetch(`${base}${link.url}`)).status, 403);
+  assert.equal((await fetch(link.url)).status, 403);
 });
 
-test("refuses every write under an auditor session and changes no file", async (context) => {
+test("refuses every write on the auditor listener and changes no file", async (context) => {
   const root = await makeTaggedAuditWorkspace(context);
   const { base } = await startServer(context, root);
   const link = await (await fetch(`${base}/api/auditor-links`, {
@@ -147,10 +149,12 @@ test("refuses every write under an auditor session and changes no file", async (
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ tag: "audit-2026", auditId: "audit-type-2" })
   })).json();
-  const cookie = (await fetch(`${base}${link.url}`)).headers.get("set-cookie").split(";")[0];
+  const auditorBase = new URL(link.url).origin;
+  const viewPath = new URL(link.url).pathname;
+  assert.equal((await fetch(link.url)).status, 200);
   const controlPath = join(root, "data", "controls", "control-access-review.json");
   const before = await readFile(controlPath, "utf8");
-  const headers = { cookie, "content-type": "application/json" };
+  const headers = { "content-type": "application/json" };
   const writes = [
     ["POST", "/api/resources", { record: { id: "control-extra", type: "control", title: "Extra" } }],
     ["PUT", "/api/resource/control/control-access-review", { record: { ...JSON.parse(before), title: "Changed" }, revision: "x" }],
@@ -158,15 +162,16 @@ test("refuses every write under an auditor session and changes no file", async (
     ["PUT", "/api/content", { path: "controls/control-access-review.md", source: "Changed", revision: "x" }],
     ["POST", "/api/commit", { message: "Auditor commit" }],
     ["POST", "/api/auditor-links", { tag: "audit-2026", auditId: "audit-type-2" }],
-    ["POST", link.url.split("?")[0]],
-    ["PUT", link.url],
-    ["DELETE", link.url]
+    ["POST", viewPath],
+    ["PUT", viewPath],
+    ["DELETE", viewPath]
   ];
   for (const [method, path, body] of writes) {
-    const response = await fetch(`${base}${path}`, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const response = await fetch(`${auditorBase}${path}`, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
     assert.equal(response.status, 403, `${method} ${path}`);
   }
-  assert.equal((await fetch(`${base}/api/state`, { headers })).status, 403);
+  assert.equal((await fetch(`${auditorBase}/api/state`)).status, 404);
+  assert.doesNotMatch(await (await fetch(`${base}${viewPath}${new URL(link.url).search}`)).text(), /FileGRC auditor view/);
   assert.equal(await readFile(controlPath, "utf8"), before);
   assert.equal(await git(root, ["status", "--porcelain"]), "");
 });

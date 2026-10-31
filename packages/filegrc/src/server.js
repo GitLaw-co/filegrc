@@ -23,7 +23,7 @@ import { createNextAuditCycle, planNextAuditCycle } from "./audit-transition.js"
 import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./batch-review.js";
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
-import { auditorRequestDenied, createAuditorView } from "./auditor-view.js";
+import { createAuditorView } from "./auditor-view.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -116,6 +116,21 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
   const calculator = createStateCalculator();
   const hostedAuth = options.hostedAuth ? createHostedAuth(input, options.hostedAuth) : null;
   const auditorView = createAuditorView(input, { secret: options.auditorSecret, now: options.now });
+  // Auditor links open on their own read-only listener, started with the first
+  // link, so auditors never reach this editing server's routes.
+  let auditorListener = null;
+  const auditorBaseUrl = () => {
+    if (!auditorListener) {
+      auditorListener = (async () => {
+        const listener = createAuditorServer(auditorView);
+        const host = options.auditorHost ?? "127.0.0.1";
+        await listen(listener, options.auditorPort ?? 0, host);
+        return { listener, url: `http://${urlHost(host)}:${listener.address().port}` };
+      })();
+      auditorListener.catch(() => { auditorListener = null; });
+    }
+    return auditorListener.then(({ url }) => url);
+  };
   const server = createHttpServer(async (request, response) => {
     const requestStarted = performance.now();
     if (timingEnabled()) {
@@ -134,9 +149,6 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         return json(response, 403, { error: "The request host is not allowed." });
       }
       const url = new URL(request.url, "http://localhost");
-      if (auditorRequestDenied(request, url)) {
-        return json(response, 403, { error: "Auditor access is read-only and limited to the auditor view." });
-      }
       // Completing one's own acknowledgement is hosted mode's only write.
       const attestingPersonId = hostedAuth && url.pathname === "/acknowledgements"
         ? verifySession(sessionCookie(request), options.hostedAuth.sessionSecret)?.personId
@@ -642,16 +654,8 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         return json(response, 200, result);
       }
       if (request.method === "POST" && url.pathname === "/api/auditor-links") {
-        return json(response, 201, await auditorView.createLink(await readJson(request)));
-      }
-      if (request.method === "GET" && url.pathname.startsWith("/auditor/")) {
-        const result = await auditorView.respond(url);
-        if (result.html) {
-          response.setHeader("set-cookie", result.cookie);
-          return text(response, 200, result.html, "text/html; charset=utf-8");
-        }
-        if (result.file) return text(response, 200, result.file, packetContentType(result.path));
-        return json(response, result.status, { error: result.error });
+        const link = await auditorView.createLink(await readJson(request));
+        return json(response, 201, { ...link, url: `${await auditorBaseUrl()}${link.url}` });
       }
       if (request.method === "GET" && url.pathname === "/api/evidence-packet") {
         return json(response, 200, await prepareEvidencePacket(input, {
@@ -916,6 +920,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
   server.once("close", () => {
     calculator.close();
     auditorView.close();
+    auditorListener?.then(({ listener }) => listener.close(), () => {});
   });
   return server;
 }
@@ -967,6 +972,22 @@ function sessionCookie(request) {
   return null;
 }
 
+function createAuditorServer(auditorView) {
+  return createHttpServer(async (request, response) => {
+    try {
+      if (request.method !== "GET") return json(response, 403, { error: "The auditor view is read-only." });
+      const url = new URL(request.url, "http://localhost");
+      if (!url.pathname.startsWith("/auditor/")) return json(response, 404, { error: "Not found." });
+      const result = await auditorView.respond(url);
+      if (result.html) return text(response, 200, result.html, "text/html; charset=utf-8");
+      if (result.file) return text(response, 200, result.file, packetContentType(result.path));
+      return json(response, result.status, { error: result.error });
+    } catch (error) {
+      json(response, 500, { error: publicErrorMessage(error, 500) });
+    }
+  });
+}
+
 async function stableStateSnapshot(input, options) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const first = await fingerprintWorkspace(input, {
@@ -1016,6 +1037,7 @@ export async function serveWorkspace(input = process.cwd(), options = {}) {
   const server = createFilegrcServer(loaded.root, {
     allowedHosts: hostedAuth ? [host, new URL(hostedAuth.publicUrl).hostname] : [host],
     hostedAuth,
+    auditorHost: host,
     allowNonAuthoritativeWrites: options.allowNonAuthoritativeWrites === true,
     backgroundPushDelayMs: options.backgroundPushDelayMs,
     stateSectionDeadlineMs: options.stateSectionDeadlineMs,
