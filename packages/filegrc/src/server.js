@@ -35,6 +35,7 @@ import {
 import {
   BROWSER_VALIDATION,
   commitAndPushWorkspace,
+  commitAuthorEnvironment,
   getBrowserRepositoryState,
   getFileHistory,
   getRepositorySnapshot,
@@ -917,8 +918,12 @@ async function acknowledgements(input, request, response, url, personId, request
     const payload = asJson
       ? await readJson(request)
       : { record: { subjectResourceIds: [new URLSearchParams(await readForm(request)).get("subjectResourceId")] } };
+    const person = (await loadWorkspace(input)).resources.find(({ id }) => id === personId);
+    const author = { name: person?.title, email: person?.email };
+    commitAuthorEnvironment(author);
     const result = await browserMutation(input, requestOptions, {
       message: ({ record }) => `Record attestation: ${record.title} (${record.personId})`,
+      author,
       fastResponse: true
     }, () => completeOwnAttestation(input, personId, payload));
     if (asJson) return json(response, 201, result);

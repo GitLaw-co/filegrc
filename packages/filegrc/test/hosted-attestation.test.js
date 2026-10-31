@@ -36,6 +36,9 @@ async function fixture(context) {
     for (const field of ["effectiveOn", "activationBasis", "activatedOn", "activatedByIds", "activatedContentRevisions"]) delete record[field];
     await writeFile(entry.path, `${JSON.stringify(record, null, 2)}\n`);
   }
+  // Hosted sign-in matches a Person by email, so a signed-in Person has one.
+  const worker = (await loadWorkspace(root)).entries.find(({ record }) => record.id === WORKER);
+  await writeFile(worker.path, `${JSON.stringify({ ...worker.record, email: "jordan.lee@example.test" }, null, 2)}\n`);
   const controlPath = join(root, "data", "controls", "control-example.json");
   const control = JSON.parse(await readFile(controlPath, "utf8"));
   await writeFile(controlPath, `${JSON.stringify({ ...control, code: "HR-02" }, null, 2)}\n`);
@@ -128,6 +131,9 @@ test("submitting records the session's person, binds the current revision and co
   const changed = (await git(root, ["show", "--name-only", "--format=", "HEAD"])).split("\n");
   assert.equal(changed.length, 1);
   assert.match(changed[0], /^data\/attestations\/[a-z0-9-]+\.json$/);
+  const person = (await loadWorkspace(root)).resources.find(({ id }) => id === WORKER);
+  assert.equal(await git(root, ["log", "-1", "--format=%an <%ae>"]), `${person.title} <${person.email}>`);
+  assert.equal(await git(root, ["log", "-1", "--format=%cn <%ce>"]), "FileGRC Server <server@example.test>");
   assert.match(await git(root, ["log", "-1", "--format=%s"]), /^Record attestation: Security Awareness Training completion \(person-example\)$/);
 
   const record = JSON.parse(await readFile(join(root, changed[0]), "utf8"));
