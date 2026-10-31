@@ -46,6 +46,8 @@ The Work Queue connects recurring reviews, policy events, owners, and deadlines.
 
 Define an automated check once and record each run's pass or fail result as dated evidence. Program readiness shows the latest result on each linked control.
 
+Collect GitHub results with `GITHUB_TOKEN=... npx filegrc collect github --org your-org --repos your-org/app --preview`, then `--apply`. It checks that the organization requires two-factor authentication and that each repository protects its default branch, and records each result as evidence naming the source component and the person who ran it. The token stays in the environment and is never written to the repository. FileGRC runs a collector only when you run this command.
+
 Move an existing risk register in with `npx filegrc import-risks register.csv --preview`, then `--apply`. A risk with one score gets its rating band and stays marked for likelihood and impact rating. Each risk records the source file and import date. Rerunning skips risks that already exist.
 
 [![FileGRC audit readiness](docs/filegrc-audit.png)](https://filegrc.com)
