@@ -25,7 +25,7 @@ Use the local web app, your editor, or an agent. They work with the same files a
 
 [![FileGRC SOC 2 program overview](docs/filegrc-home.png)](https://filegrc.com)
 
-FileGRC guides you through scope, policy approval, control implementation, ongoing work, and audit preparation. Start with a Security-focused SOC 2 program, then expand when your scope calls for it. Starter records are proposals to review against how your company actually works.
+FileGRC guides you through scope, policy approval, control implementation, ongoing work, and audit preparation. Start with a Security-focused SOC 2 program, then expand when your scope calls for it. Add `"trustServicesCategories": ["availability", "confidentiality"]` to the `npx filegrc setup` payload to create the A1 or C1 criteria for your applicability decisions. Starter records are proposals to review against how your company actually works.
 
 ## Give your agents the whole picture
 
