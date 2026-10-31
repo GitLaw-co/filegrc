@@ -4,3 +4,4 @@
 - 2026-10-31 Nick: Yes, as recommended - the card is the spec. Build the opt-in serve flag with Google sign-in limited to one email domain, reading the OAuth client ID/secret from env vars; test with a stub. I'll create the OAuth client separately - don't wait for it.
 - 2026-10-31 Nick: Yes, as recommended - the card is the spec. Build after FG-001 (or alongside, behind the same flag).
 - 2026-10-31 Nick: Yes, as recommended - the card is the spec. Reuse the evidence packet indexes; expiring links.
+- 2026-10-31 Nick: Yes, as recommended - the card is the spec. Collector interface + GitHub first, token from an env var, tests on fixtures; GCP and Workspace as follow-up items.

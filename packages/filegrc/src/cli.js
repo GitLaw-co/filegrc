@@ -88,6 +88,7 @@ import { printGithubStarMessage } from "./startup.js";
 import { assertWorkspaceEngineVersion } from "./runtime-version.js";
 import { readResourceMutation } from "./resource-mutation.js";
 import { applyRiskImport, planRiskImport } from "./risk-import.js";
+import { applyCollection, planCollection } from "./collectors/index.js";
 import { currentCalendarDate } from "./time.js";
 import { validateWorkspace } from "./validate.js";
 import { loadWorkspace } from "./workspace.js";
@@ -1063,6 +1064,31 @@ export async function runCli(argv = process.argv.slice(2)) {
     }
     return result;
   }
+  if (command === "collect") {
+    if (Boolean(flags.preview) === Boolean(flags.apply)) throw new Error("Pass exactly one of --preview or --apply.");
+    const list = (value) => typeof value === "string" ? value.split(",").map((item) => item.trim()).filter(Boolean) : [];
+    const options = {
+      org: flags.org,
+      repos: list(flags.repos),
+      controls: list(flags.controls),
+      component: flags.component,
+      collector: flags.collector,
+      classification: flags.classification,
+      cadence: flags.cadence
+    };
+    const result = flags.apply
+      ? await withWorkflowDelta(root, () => applyCollection(root, positionals[0], options))
+      : await planCollection(root, positionals[0], options);
+    if (flags.json) console.log(JSON.stringify(result, null, 2));
+    else {
+      const verb = flags.apply ? "Created" : "Create";
+      for (const payload of result.checks) console.log(`${verb} automated-check/${payload.record.id}\n${JSON.stringify(payload, null, 2)}`);
+      for (const payload of result.evidence) console.log(`${verb} evidence/${payload.record.id}\t${payload.record.operatingResult}\n${JSON.stringify(payload, null, 2)}`);
+      for (const { id, message } of result.errors) console.log(`Error\t${id}\t${message}`);
+      console.log(flags.apply ? `Created ${result.created.length} records from the ${result.collector} collector.` : "No workspace files were changed.");
+    }
+    return result;
+  }
   if (command === "create") {
     const mutation = await readMutation(positionals[0]);
     const result = await withWorkflowDelta(root, () => createResource(root, mutation.record, { content: mutation.content }));
@@ -1548,6 +1574,7 @@ Usage:
   filegrc preview-mutation <preview.json|-> [--json]
   filegrc create <mutation.json|-> [--json]
   filegrc import-risks <register.csv> --preview|--apply [--program program-id] [--json]
+  filegrc collect github --preview|--apply --org org --component id --collector person-id --classification id [--repos owner/name,...] [--controls id,...] [--json]
   filegrc complete <obligation-id> --scaffold --window-start YYYY-MM-DD [--program program-id] [--completed-on YYYY-MM-DD] [--population-as-of YYYY-MM-DD]
   filegrc complete <obligation-id> <completion-record.json|-> [--population-as-of YYYY-MM-DD] [--expected-revision hash] [--json]
   filegrc review-period-impact <resource-id> [payload.json] [--scaffold | --preview | --yes] [--json]
@@ -1615,6 +1642,30 @@ and import date under extensions.filegrc.import.
 --preview validates and lists the proposed records without writing. --apply writes
 them in one batch only when every row is valid. Risks whose ID already exists are
 skipped and never changed, so rerunning the same file is safe.`);
+    return;
+  }
+  if (command === "collect") {
+    console.log(`Usage:
+  filegrc collect github --preview|--apply --org org [--repos owner/name,...]
+    --component component-id --collector person-id --classification classification-id
+    [--controls control-id,...] [--cadence daily] [--json]
+
+Read source settings once and record each result as dated evidence of an
+automated check. FileGRC runs a collector only when you run this command.
+
+github checks that the organization requires two-factor authentication and that
+each listed repository protects its default branch. It reads GITHUB_TOKEN from
+the environment and never stores it. Use a read-only token: a fine-grained token
+with organization Administration read plus repository Metadata and Contents read,
+or a classic token with read:org (add repo for private repositories). Set
+GITHUB_API_URL for GitHub Enterprise Server.
+
+--component names the source Component and --collector the Person who runs the
+collection. A missing check is created as an active automated check linked to
+--controls; an existing check is reused and never changed. Each run creates one
+collected Evidence Artifact per check with its time and passed or failed result.
+--preview validates and prints the payloads without writing; --apply writes them
+in one batch only when every payload is valid.`);
     return;
   }
   if (command === "setup") {
