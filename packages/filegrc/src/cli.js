@@ -1069,6 +1069,7 @@ export async function runCli(argv = process.argv.slice(2)) {
     const list = (value) => typeof value === "string" ? value.split(",").map((item) => item.trim()).filter(Boolean) : [];
     const options = {
       org: flags.org,
+      project: flags.project,
       repos: list(flags.repos),
       controls: list(flags.controls),
       component: flags.component,
@@ -1649,6 +1650,7 @@ skipped and never changed, so rerunning the same file is safe.`);
   filegrc collect github --preview|--apply --org org [--repos owner/name,...]
     --component component-id --collector person-id --classification classification-id
     [--controls control-id,...] [--cadence daily] [--json]
+  FILEGRC_GCP_CREDENTIALS=key.json filegrc collect gcp --preview|--apply --project project-id (other flags as for github; checks public IAM bindings and Data Access audit logs)
 
 Read source settings once and record each result as dated evidence of an
 automated check. FileGRC runs a collector only when you run this command.
