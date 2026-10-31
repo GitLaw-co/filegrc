@@ -48,6 +48,8 @@ Define an automated check once and record each run's pass or fail result as date
 
 Collect GitHub results with `GITHUB_TOKEN=... npx filegrc collect github --org your-org --repos your-org/app --preview`, then `--apply`. It checks that the organization requires two-factor authentication and that each repository protects its default branch, and records each result as evidence naming the source component and the person who ran it. The token stays in the environment and is never written to the repository. FileGRC runs a collector only when you run this command.
 
+Collect Google Cloud results with `FILEGRC_GCP_CREDENTIALS=key.json npx filegrc collect gcp --project your-project --preview`, then `--apply`. `FILEGRC_GCP_CREDENTIALS` holds a read-only service account key as inline JSON or a file path. The collector checks that no IAM binding grants a role to `allUsers` or `allAuthenticatedUsers` and that Data Access audit logs record reads and writes for all services. The key is never printed or stored.
+
 Move an existing risk register in with `npx filegrc import-risks register.csv --preview`, then `--apply`. A risk with one score gets its rating band and stays marked for likelihood and impact rating. Each risk records the source file and import date. Rerunning skips risks that already exist.
 
 [![FileGRC audit readiness](docs/filegrc-audit.png)](https://filegrc.com)

@@ -3,6 +3,7 @@ import { applyResourceBatch, resourcePath } from "../files.js";
 import { currentCalendarDate } from "../time.js";
 import { validateWorkspace } from "../validate.js";
 import { loadWorkspace } from "../workspace.js";
+import { gcpCollector } from "./gcp.js";
 import { githubCollector } from "./github.js";
 
 // A collector reads one external source only when a person runs
@@ -11,7 +12,7 @@ import { githubCollector } from "./github.js";
 //   { key, title, expectedCondition, sourceDescription, result, observed }
 // `observed` is Markdown with the facts read. The collector never writes;
 // this module turns runs into automated-check and evidence payloads.
-export const COLLECTORS = { github: githubCollector };
+export const COLLECTORS = { github: githubCollector, gcp: gcpCollector };
 
 export async function planCollection(input, name, options = {}, env = process.env) {
   const collector = COLLECTORS[name];
