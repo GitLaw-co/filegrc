@@ -9,20 +9,12 @@ import { resolveWorkspaceRoot } from "./paths.js";
 
 // An auditor reads one tagged revision through signed links. The link names
 // the commit the tag resolved to when it was issued, so later commits and a
-// moved tag never change what the auditor sees.
-export const AUDITOR_COOKIE = "filegrc-auditor";
+// moved tag never change what the auditor sees. The server answers these links
+// on a separate listener that has no write routes and sets no cookie.
 export const AUDITOR_LINK_MAX_HOURS = 168;
 const AUDITOR_LINK_DEFAULT_HOURS = 24;
 const EVIDENCE_LINK_HOURS = 1;
 const HOUR_MS = 3_600_000;
-
-export function auditorRequestDenied(request, url) {
-  const auditorPath = url.pathname.startsWith("/auditor/");
-  if (auditorPath) return request.method !== "GET";
-  const cookies = String(request.headers.cookie || "").split(";").map((part) => part.trim().split("=")[0]);
-  if (!cookies.includes(AUDITOR_COOKIE)) return false;
-  return !(request.method === "GET" && url.pathname === "/favicon.png");
-}
 
 export function createAuditorView(input, options = {}) {
   const root = resolveWorkspaceRoot(input);
@@ -108,8 +100,7 @@ export function createAuditorView(input, options = {}) {
         );
         return {
           status: 200,
-          html: renderAuditorView(packet, { tag, commit: access.commit, evidenceLink, evidenceExpires }),
-          cookie: `${AUDITOR_COOKIE}=1; Path=/; Max-Age=${Math.ceil((access.expires - now()) / 1000)}; HttpOnly; SameSite=Strict`
+          html: renderAuditorView(packet, { tag, commit: access.commit, evidenceLink, evidenceExpires })
         };
       }
       const [, , kind, evidenceId, path] = segments;
