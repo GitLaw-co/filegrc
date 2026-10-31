@@ -214,6 +214,7 @@ async function validateWorkspaceUnmeasured(input, options) {
     if (record.type === "evidence") {
       validateEvidencePaths(record, displayPath, diagnostics);
       validateEvidenceSourceRevision(record, loaded.root, displayPath, diagnostics);
+      validateAutomatedCheckResult(record, byId, displayPath, diagnostics);
     }
     validateCoverage(record, displayPath, diagnostics);
     validateClassification(record, loaded, displayPath, diagnostics);
@@ -2022,6 +2023,28 @@ function validateEvidencePaths(record, path, diagnostics) {
         "misplaced-evidence-attachment",
         path,
         `filePaths attachments must stay under data/${expectedPrefix}.`
+      ));
+    }
+  }
+}
+
+// A run result is dated evidence, so it needs its run time, its result, and
+// the same source Component as the check that produced it.
+function validateAutomatedCheckResult(record, byId, path, diagnostics) {
+  if (!["collected", "verified"].includes(record.status)) return;
+  for (const check of (record.sourceResourceIds || []).map((id) => byId.get(id)).filter((source) => source?.type === "automated-check")) {
+    if (!record.sourceGeneratedAt || !record.operatingResult) {
+      diagnostics.push(error(
+        "incomplete-automated-check-result",
+        path,
+        `A result of automated check "${check.id}" needs sourceGeneratedAt for the run time and operatingResult for its pass or fail result.`
+      ));
+    }
+    if (check.sourceComponentId && record.sourceComponentId !== check.sourceComponentId) {
+      diagnostics.push(error(
+        "automated-check-source-mismatch",
+        path,
+        `A result of automated check "${check.id}" must name its source Component "${check.sourceComponentId}" in sourceComponentId.`
       ));
     }
   }

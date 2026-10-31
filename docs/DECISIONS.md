@@ -1,0 +1,1 @@
+- 2026-10-31 Nick: Yes, as recommended - the card is the spec: check record holds the definition, each run's result is dated evidence. Rebase on main right before the PR.

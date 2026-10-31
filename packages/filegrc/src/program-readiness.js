@@ -1859,6 +1859,7 @@ async function controlsStage(scope, byId, readMarkdown, asOf, model, root = null
       : control.status === "partially-implemented" ? "partial"
         : launchReady ? "ready-to-implement" : "planned";
     const missing = Object.entries(individualChecks).filter(([, value]) => !value).map(([name]) => controlCheckLabel(name));
+    const automatedChecks = latestAutomatedCheckResults(control, byId, asOfTime);
     const nextSteps = controlImplementationSteps(control, individualChecks, {
       missingSourceFamilies: sourcePrerequisiteIds.length ? individualMissingSourceFamilies : missingSourceFamilies,
       targets: [...new Set([
@@ -1888,6 +1889,7 @@ async function controlsStage(scope, byId, readMarkdown, asOf, model, root = null
         implementationAssertion: "Implemented means the stated control works for the named Systems, its owner and procedure match current practice, and its evidence sources can produce proof. Scheduled or event-driven Controls have at least one enabled linked Obligation. It does not assert that a scheduled cycle or event has already occurred. Record dated operating proof when it does.",
         nextSteps,
         commands: [`npx filegrc get ${shellArgument(control.id)} --mutation`],
+        ...(automatedChecks.length ? { automatedChecks } : {}),
         workQueue: queueSchedules.length ? {
           enabled: queueSchedules.filter((obligation) => obligationRuleIsEnabled(obligation, byId, asOfTime)).length,
           running: queueSchedules.filter((obligation) => obligationIsRunning(obligation, byId, asOf, model, asOfTime)).length,
@@ -1898,6 +1900,32 @@ async function controlsStage(scope, byId, readMarkdown, asOf, model, root = null
   }
   items.push(...sourcePrerequisites.values());
   return stage("controls", "Implement Controls", "Put each selected Control in place. Check its launch conditions, then mark it Implemented when it is working. Dated proof follows during operation.", items);
+}
+
+// Reports the latest retained run of each active check linked to the Control.
+// FileGRC shows the reported result; it does not judge whether it is sufficient.
+function latestAutomatedCheckResults(control, byId, asOfTime) {
+  const records = [...byId.values()];
+  const cutoff = asOfTime ? Date.parse(asOfTime) : Infinity;
+  return records.filter((record) => (
+    record.type === "automated-check" && record.status === "active" && (record.controlIds || []).includes(control.id)
+  )).map((check) => {
+    const latest = records.filter((record) => (
+      record.type === "evidence"
+      && ["collected", "verified"].includes(record.status)
+      && (record.sourceResourceIds || []).includes(check.id)
+      && record.operatingResult
+      && Date.parse(record.sourceGeneratedAt) <= cutoff
+    )).sort((left, right) => Date.parse(right.sourceGeneratedAt) - Date.parse(left.sourceGeneratedAt))[0];
+    return {
+      checkId: check.id,
+      title: check.title,
+      cadence: check.cadence || null,
+      latestResult: latest?.operatingResult || null,
+      latestRunAt: latest?.sourceGeneratedAt || null,
+      latestEvidenceId: latest?.id || null
+    };
+  });
 }
 
 async function evidenceSourcesStage(scope, byId, model, readMarkdown) {
