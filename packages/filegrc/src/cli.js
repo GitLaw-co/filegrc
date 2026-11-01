@@ -1070,6 +1070,8 @@ export async function runCli(argv = process.argv.slice(2)) {
     const options = {
       org: flags.org,
       project: flags.project,
+      admin: flags.admin,
+      maxAdmins: flags["max-admins"],
       repos: list(flags.repos),
       controls: list(flags.controls),
       component: flags.component,
@@ -1651,6 +1653,7 @@ skipped and never changed, so rerunning the same file is safe.`);
     --component component-id --collector person-id --classification classification-id
     [--controls control-id,...] [--cadence daily] [--json]
   FILEGRC_GCP_CREDENTIALS=key.json filegrc collect gcp --preview|--apply --project project-id (other flags as for github; checks public IAM bindings and Data Access audit logs)
+  FILEGRC_WORKSPACE_CREDENTIALS=key.json filegrc collect workspace --preview|--apply --admin admin-email [--max-admins 3] (other flags as for github; checks 2-step verification enrolment and super administrator count)
 
 Read source settings once and record each result as dated evidence of an
 automated check. FileGRC runs a collector only when you run this command.
@@ -1661,6 +1664,11 @@ the environment and never stores it. Use a read-only token: a fine-grained token
 with organization Administration read plus repository Metadata and Contents read,
 or a classic token with read:org (add repo for private repositories). Set
 GITHUB_API_URL for GitHub Enterprise Server.
+
+workspace checks that every active Google Workspace user is enrolled in 2-step
+verification and that at most --max-admins users (default 3) are super
+administrators. The service account needs domain-wide delegation for the scope
+admin.directory.user.readonly only; --admin names the administrator it acts for.
 
 --component names the source Component and --collector the Person who runs the
 collection. A missing check is created as an active automated check linked to
