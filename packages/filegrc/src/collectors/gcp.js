@@ -6,8 +6,9 @@ const HINT = "Check the project ID and that the service account can read the pro
 const PUBLIC_MEMBERS = new Set(["allUsers", "allAuthenticatedUsers"]);
 
 // Reads one Google Cloud project's IAM policy with a read-only service account.
-// FILEGRC_GCP_CREDENTIALS holds the service account key as inline JSON or a
-// file path. The key signs one token request and is never printed or stored.
+// FILEGRC_GCP_CREDENTIALS holds the service account key, or keyless credentials
+// (see google-auth.js), as inline JSON or a file path. Credentials and tokens are
+// never printed or stored.
 // FILEGRC_GCP_TOKEN_URL and FILEGRC_GCP_API_URL override the Google endpoints;
 // plain HTTP is accepted only on loopback.
 export const gcpCollector = {
