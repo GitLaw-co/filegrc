@@ -23,7 +23,7 @@ import { createNextAuditCycle, planNextAuditCycle } from "./audit-transition.js"
 import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./batch-review.js";
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
-import { createAuditorView } from "./auditor-view.js";
+import { auditorLinkSecretFromEnv, createAuditorView } from "./auditor-view.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -118,10 +118,12 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
   const hostedAuth = options.hostedAuth ? createHostedAuth(input, options.hostedAuth) : null;
   const helpRoot = join(resolveWorkspaceRoot(input), "faq");
   const auditorView = createAuditorView(input, { secret: options.auditorSecret, now: options.now });
-  // Auditor links open on their own read-only listener, started with the first
-  // link, so auditors never reach this editing server's routes.
+  // Locally, auditor links open on their own read-only listener, started with the
+  // first link, so auditors never reach this editing server's routes. In hosted
+  // mode the main server answers /auditor/ itself, behind the public URL.
   let auditorListener = null;
   const auditorBaseUrl = () => {
+    if (hostedAuth) return Promise.resolve(new URL(options.hostedAuth.publicUrl).origin);
     if (!auditorListener) {
       auditorListener = (async () => {
         const listener = createAuditorServer(auditorView);
@@ -151,6 +153,8 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         return json(response, 403, { error: "The request host is not allowed." });
       }
       const url = new URL(request.url, "http://localhost");
+      // Signed auditor links need no session; nothing else under /auditor/ is served.
+      if (hostedAuth && url.pathname.startsWith("/auditor/")) return await answerAuditor(auditorView, request, response, url);
       // Completing one's own acknowledgement is hosted mode's only write.
       const attestingPersonId = hostedAuth && url.pathname === "/acknowledgements"
         ? verifySession(sessionCookie(request), options.hostedAuth.sessionSecret)?.personId
@@ -1039,18 +1043,22 @@ function sessionCookie(request) {
 
 function createAuditorServer(auditorView) {
   return createHttpServer(async (request, response) => {
-    try {
-      if (request.method !== "GET") return json(response, 403, { error: "The auditor view is read-only." });
-      const url = new URL(request.url, "http://localhost");
-      if (!url.pathname.startsWith("/auditor/")) return json(response, 404, { error: "Not found." });
-      const result = await auditorView.respond(url);
-      if (result.html) return text(response, 200, result.html, "text/html; charset=utf-8");
-      if (result.file) return text(response, 200, result.file, packetContentType(result.path));
-      return json(response, result.status, { error: result.error });
-    } catch (error) {
-      json(response, 500, { error: publicErrorMessage(error, 500) });
-    }
+    const url = new URL(request.url, "http://localhost");
+    if (request.method === "GET" && !url.pathname.startsWith("/auditor/")) return json(response, 404, { error: "Not found." });
+    return answerAuditor(auditorView, request, response, url);
   });
+}
+
+async function answerAuditor(auditorView, request, response, url) {
+  try {
+    if (request.method !== "GET") return json(response, 403, { error: "The auditor view is read-only." });
+    const result = await auditorView.respond(url);
+    if (result.html) return text(response, 200, result.html, "text/html; charset=utf-8");
+    if (result.file) return text(response, 200, result.file, packetContentType(result.path));
+    return json(response, result.status, { error: result.error });
+  } catch (error) {
+    json(response, 500, { error: publicErrorMessage(error, 500) });
+  }
 }
 
 async function stableStateSnapshot(input, options) {
@@ -1085,6 +1093,7 @@ export async function serveWorkspace(input = process.cwd(), options = {}) {
     throw new Error("The server port must be an integer from 0 through 65535.");
   }
   const hostedAuth = options.hostedAuth ?? hostedAuthFromEnv(options.env ?? process.env);
+  const auditorSecret = options.auditorSecret ?? auditorLinkSecretFromEnv(options.env ?? process.env);
   let startupSynchronization;
   try {
     startupSynchronization = await synchronizeBrowserStartup(input, {
@@ -1103,6 +1112,7 @@ export async function serveWorkspace(input = process.cwd(), options = {}) {
     allowedHosts: hostedAuth ? [host, new URL(hostedAuth.publicUrl).hostname] : [host],
     hostedAuth,
     auditorHost: host,
+    auditorSecret,
     allowNonAuthoritativeWrites: options.allowNonAuthoritativeWrites === true,
     backgroundPushDelayMs: options.backgroundPushDelayMs,
     stateSectionDeadlineMs: options.stateSectionDeadlineMs,
