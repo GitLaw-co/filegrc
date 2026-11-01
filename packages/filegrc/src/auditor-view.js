@@ -9,12 +9,25 @@ import { resolveWorkspaceRoot } from "./paths.js";
 
 // An auditor reads one tagged revision through signed links. The link names
 // the commit the tag resolved to when it was issued, so later commits and a
-// moved tag never change what the auditor sees. The server answers these links
-// on a separate listener that has no write routes and sets no cookie.
+// moved tag never change what the auditor sees. Locally the server answers these
+// links on a separate listener; in hosted mode it answers them under /auditor/
+// on the main server. Either way only GET is served and no cookie is set.
 export const AUDITOR_LINK_MAX_HOURS = 168;
 const AUDITOR_LINK_DEFAULT_HOURS = 24;
 const EVIDENCE_LINK_HOURS = 1;
 const HOUR_MS = 3_600_000;
+// Optional. A fixed signing key keeps issued links valid across restarts.
+export const AUDITOR_LINK_SECRET_ENV = "FILEGRC_AUDITOR_LINK_SECRET";
+const MIN_AUDITOR_LINK_SECRET_LENGTH = 32;
+
+export function auditorLinkSecretFromEnv(env = process.env) {
+  const secret = String(env[AUDITOR_LINK_SECRET_ENV] ?? "").trim();
+  if (!secret) return undefined;
+  if (secret.length < MIN_AUDITOR_LINK_SECRET_LENGTH) {
+    throw new Error(`${AUDITOR_LINK_SECRET_ENV} must be at least ${MIN_AUDITOR_LINK_SECRET_LENGTH} characters.`);
+  }
+  return secret;
+}
 
 export function createAuditorView(input, options = {}) {
   const root = resolveWorkspaceRoot(input);
