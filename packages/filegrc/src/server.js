@@ -8,7 +8,7 @@ import { createStateCalculator } from "./state-calculator.js";
 import { withCalculationCache } from "./calculation-cache.js";
 import { createServer as createHttpServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -74,7 +74,7 @@ import {
   planExternalReviewerGovernance,
   setupExternalReviewerGovernance
 } from "./external-reviewer.js";
-import { isWithin, relativeToWorkspace, resolveWorkspacePath } from "./paths.js";
+import { isWithin, relativeToWorkspace, resolveWorkspacePath, resolveWorkspaceRoot } from "./paths.js";
 import { activatePolicies } from "./policy-activation.js";
 import { resolveProgram } from "./program.js";
 import { applyReconciliation, dismissReconciliation, planReconciliation } from "./reconciliation.js";
@@ -91,7 +91,7 @@ import {
 } from "./workflow.js";
 import { scaffoldNonmaterialAmendment, saveNonmaterialAmendment } from "./nonmaterial-amendments.js";
 import { loadWorkspace } from "./workspace.js";
-import { APP_SCRIPT, APP_STYLES, renderAcknowledgementsPage, renderIndex } from "./web.js";
+import { APP_SCRIPT, APP_STYLES, renderAcknowledgementsPage, renderHelpIndexPage, renderHelpMissingPage, renderHelpPage, renderIndex } from "./web.js";
 import { assertWorkspaceEngineVersion } from "./runtime-version.js";
 
 const STATE_SESSION_MAX_AGE_MS = 5 * 60_000;
@@ -115,6 +115,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
   let stateMutationWaiters = [];
   const calculator = createStateCalculator();
   const hostedAuth = options.hostedAuth ? createHostedAuth(input, options.hostedAuth) : null;
+  const helpRoot = join(resolveWorkspaceRoot(input), "faq");
   const auditorView = createAuditorView(input, { secret: options.auditorSecret, now: options.now });
   // Auditor links open on their own read-only listener, started with the first
   // link, so auditors never reach this editing server's routes.
@@ -910,7 +911,20 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         const isPacketIndex = segments.length === 4 && segments.at(-1) === "index.html";
         return text(response, 200, await readFile(path), packetContentType(path, isPacketIndex));
       }
-      if (request.method === "GET" && !url.pathname.startsWith("/api/")) return text(response, 200, renderIndex(), "text/html; charset=utf-8");
+      // Match help routes on the raw path: URL parsing would resolve `/faq/../x` first.
+      const helpRoute = /^\/faq(?:\/([^?#]*))?(?:[?#]|$)/.exec(request.url);
+      if (request.method === "GET" && helpRoute) {
+        const pages = await helpPages(helpRoot);
+        if (helpRoute[1] === undefined) return text(response, 200, renderHelpIndexPage(pages), "text/html; charset=utf-8");
+        const page = pages.find(({ slug }) => slug === helpRoute[1]);
+        return page
+          ? text(response, 200, renderHelpPage(page), "text/html; charset=utf-8")
+          : text(response, 404, renderHelpMissingPage(), "text/html; charset=utf-8");
+      }
+      if (request.method === "GET" && !url.pathname.startsWith("/api/")) {
+        const helpHref = (await helpPages(helpRoot)).length ? "/faq" : null;
+        return text(response, 200, renderIndex(null, { helpHref }), "text/html; charset=utf-8");
+      }
       json(response, 404, { error: "Not found." });
     } catch (error) {
       const status = statusFor(error);
@@ -962,6 +976,24 @@ async function acknowledgements(input, request, response, url, personId, request
     const status = statusFor(error);
     return page(status, { error: publicErrorMessage(error, status) });
   }
+}
+
+// Every regular `faq/<slug>.md` file, sorted by file name. Symlinks, folders and
+// names outside the slug pattern are skipped, so no path leaves `faq/`.
+async function helpPages(helpRoot) {
+  let entries;
+  try {
+    entries = await readdir(helpRoot, { withFileTypes: true });
+  } catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes(error.code)) return [];
+    throw error;
+  }
+  const names = entries.filter((entry) => entry.isFile() && /^[a-z0-9][a-z0-9-]*\.md$/.test(entry.name)).map(({ name }) => name).sort();
+  return Promise.all(names.map(async (name) => {
+    const slug = name.slice(0, -".md".length);
+    const source = await readFile(join(helpRoot, name), "utf8");
+    return { slug, title: /^#[ \t]+(.+)$/m.exec(source)?.[1].trim() || slug, source };
+  }));
 }
 
 function sessionCookie(request) {

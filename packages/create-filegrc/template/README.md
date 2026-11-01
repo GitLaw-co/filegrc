@@ -52,6 +52,8 @@ Collect Google Cloud results with `FILEGRC_GCP_CREDENTIALS=key.json npx filegrc 
 
 Collect Google Workspace results with `FILEGRC_WORKSPACE_CREDENTIALS=key.json npx filegrc collect workspace --admin admin@your-domain --preview`, then `--apply`. The service account needs domain-wide delegation for `admin.directory.user.readonly` only and acts for the administrator named by `--admin`. The collector checks that every active user is enrolled in 2-step verification and that at most `--max-admins` users (default 3) are super administrators. The key is never printed or stored. Add `--devices` to read the Cloud Identity device list as well; the service account then also needs `cloud-identity.devices.readonly`. It records an inventory of devices synced in the last `--since-days` days (default 30, one per serial number) and checks disk encryption, screen lock, OS version (`--min-macos` 15, `--min-windows-build` 22000; other systems are listed as not checked) and owner email.
 
+Give staff how-to pages by adding Markdown files such as `faq/laptop-encryption.md`. `npm run serve` lists them at `/faq`, titled by each file's first `# ` heading, and adds a Help link to the sidebar. Pages are read-only, sit behind the same sign-in in hosted mode, and show raw HTML as text. The `faq/` folder is not part of the record data.
+
 Move an existing risk register in with `npx filegrc import-risks register.csv --preview`, then `--apply`. A risk with one score gets its rating band and stays marked for likelihood and impact rating. Each risk records the source file and import date. Rerunning skips risks that already exist.
 
 [![FileGRC audit readiness](docs/filegrc-audit.png)](https://filegrc.com)
