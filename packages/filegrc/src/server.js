@@ -1043,7 +1043,12 @@ function sessionCookie(request) {
 
 function createAuditorServer(auditorView) {
   return createHttpServer(async (request, response) => {
-    const url = new URL(request.url, "http://localhost");
+    let url;
+    try {
+      url = new URL(request.url, "http://localhost");
+    } catch {
+      return json(response, 400, { error: "Bad request." });
+    }
     if (request.method === "GET" && !url.pathname.startsWith("/auditor/")) return json(response, 404, { error: "Not found." });
     return answerAuditor(auditorView, request, response, url);
   });

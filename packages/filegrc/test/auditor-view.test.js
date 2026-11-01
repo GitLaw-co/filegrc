@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { connect } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -178,6 +179,26 @@ test("refuses every write on the auditor listener and changes no file", async (c
   assert.equal(await git(root, ["status", "--porcelain"]), "");
 });
 
+test("a malformed request target gets 400 from the auditor listener and does not stop it", async (context) => {
+  const root = await makeTaggedAuditWorkspace(context);
+  const { base } = await startServer(context, root);
+  const link = await (await fetch(`${base}/api/auditor-links`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tag: "audit-2026", auditId: "audit-type-2" })
+  })).json();
+  const { port } = new URL(link.url);
+  const reply = await new Promise((resolve, reject) => {
+    const socket = connect(Number(port), "127.0.0.1", () => socket.end("GET http://[::1/auditor/x HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+    let data = "";
+    socket.on("data", (chunk) => { data += chunk; });
+    socket.on("end", () => resolve(data));
+    socket.on("error", reject);
+  });
+  assert.match(reply, /^HTTP\/1\.1 400 /);
+  assert.equal((await fetch(link.url)).status, 200);
+});
+
 const PUBLIC_URL = "https://filegrc.example.com";
 const SESSION_SECRET = "test-session-secret-with-enough-length";
 
@@ -263,6 +284,12 @@ test("hosted mode serves signed auditor pages on the public URL without sign-in,
   // The signature does not open editing routes, and they still need a session.
   assert.equal((await fetch(`${base}/api/state${signed}`)).status, 401);
   assert.equal((await fetch(`${base}/${signed}`, { redirect: "manual" })).status, 302);
+  // Only the /auditor/ prefix skips sign-in; look-alike and encoded paths do not reach editing routes.
+  assert.equal((await fetch(`${base}/auditorX/audit-2026/audit-type-2${signed}`, { redirect: "manual" })).status, 302);
+  assert.equal((await fetch(`${base}/auditor${signed}`, { redirect: "manual" })).status, 302);
+  assert.equal((await fetch(`${base}/auditor/..%2Fapi%2Fstate${signed}`)).status, 403);
+  assert.equal((await fetch(`${base}${viewPath}${signed}`, { method: "HEAD" })).status, 403);
+  assert.equal(view.headers.get("cache-control"), "no-store");
 
   clock.now += 60 * 60_000;
   assert.equal((await fetch(local(link.url))).status, 403);
