@@ -13,8 +13,10 @@ const DEVICES_HINT = "Check that --admin names a Workspace administrator and tha
 // through domain-wide delegation and holds only the directory read-only scope.
 // --devices adds the Cloud Identity devices read-only scope and lists endpoint
 // devices with their device users.
-// FILEGRC_WORKSPACE_CREDENTIALS holds the service account key as inline JSON or
-// a file path. The key signs one token request and is never printed or stored.
+// FILEGRC_WORKSPACE_CREDENTIALS holds the service account key, or keyless
+// credentials (see google-auth.js), as inline JSON or a file path. Without a key,
+// the delegation JWT is signed through the IAM Credentials API. Credentials and
+// tokens are never printed or stored.
 // FILEGRC_WORKSPACE_TOKEN_URL, FILEGRC_WORKSPACE_API_URL and
 // FILEGRC_CLOUD_IDENTITY_API_URL override the Google endpoints; plain HTTP is
 // accepted only on loopback.
