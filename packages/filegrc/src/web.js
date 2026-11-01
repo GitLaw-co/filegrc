@@ -125,6 +125,42 @@ export function renderAcknowledgementsPage({ person, items = [], done = null, er
 </html>`;
 }
 
+// Hosted mode's auditor-link page, served only to FILEGRC_ADMIN_EMAILS. The form
+// posts to `/api/auditor-links`, which returns this page with the issued link.
+export function renderAuditorLinksPage({ admin = null, link = null, values = {}, error = null, denied = false }) {
+  const body = denied
+    ? `<h2>Access denied</h2><p>Only people listed in FILEGRC_ADMIN_EMAILS can issue auditor links.</p>`
+    : `<div class="page-intro"><div>
+      <p class="kicker">${escapeHtml(admin?.email || "Admin")}</p>
+      <h2>Issue an auditor link</h2>
+      <p>The link opens a read-only view of the Audit at the commit the Git tag names now. It expires after the hours you choose.</p>
+    </div></div>
+    ${error ? `<p class="panel dialog-error" role="alert">${escapeHtml(error)}</p>` : ""}
+    ${link ? `<section class="panel" role="status"><p>Link for ${escapeHtml(link.tag)} / ${escapeHtml(link.auditId)}, expires ${escapeHtml(link.expiresAt)}:</p>
+      <p><input type="text" readonly aria-label="Auditor link" value="${escapeHtml(link.url)}" style="width:100%"></p></section>` : ""}
+    <form class="panel" method="post" action="/api/auditor-links">
+      <p><label>Git tag <input name="tag" required value="${escapeHtml(values.tag || "")}"></label></p>
+      <p><label>Audit ID <input name="auditId" required value="${escapeHtml(values.auditId || "")}"></label></p>
+      <p><label>Hours <input name="hours" type="number" min="1" max="168" step="1" required value="${escapeHtml(values.hours || "24")}"></label></p>
+      <button class="button primary" type="submit">Issue link</button>
+    </form>`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Auditor links · FileGRC</title>
+  <link rel="stylesheet" href="/filegrc.css">
+</head>
+<body>
+  <main id="main" class="page">
+    ${body}
+    <p><a href="/">Open the program</a> · <a href="/auth/logout">Sign out</a></p>
+  </main>
+</body>
+</html>`;
+}
+
 // Read-only help pages from the workspace `faq/` folder. renderMarkdown escapes
 // raw HTML, so a page cannot inject markup.
 export function renderHelpIndexPage(pages = []) {

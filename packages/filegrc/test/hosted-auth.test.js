@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { hostedAuthFromEnv, signSession, verifySession } from "../src/hosted-auth.js";
+import { createHostedAuth, hostedAuthFromEnv, signSession, verifySession } from "../src/hosted-auth.js";
 import { serveWorkspace } from "../src/server.js";
 import { initializeGitWorkspace, makeWorkspace } from "./helpers.js";
 
@@ -41,7 +41,7 @@ async function stubTokenEndpoint(context) {
   return { url: `http://127.0.0.1:${server.address().port}/token`, requests };
 }
 
-async function fixture(context, hosted = true) {
+async function fixture(context, hosted = true, adminEmails = undefined) {
   const root = await mkdtemp(join(tmpdir(), "filegrc-hosted-auth-"));
   await makeWorkspace(root);
   await initializeGitWorkspace(root);
@@ -55,14 +55,15 @@ async function fixture(context, hosted = true) {
       allowedDomain: "example.com",
       sessionSecret: SESSION_SECRET,
       publicUrl: "https://filegrc.example.com",
-      tokenEndpoint: tokenEndpoint.url
+      tokenEndpoint: tokenEndpoint.url,
+      adminEmails
     } : undefined
   });
   context.after(async () => {
     await new Promise((resolve) => running.server.close(resolve));
     await rm(root, { recursive: true, force: true });
   });
-  return { url: running.url, tokenEndpoint };
+  return { url: running.url, tokenEndpoint, root };
 }
 
 function cookies(response) {
@@ -189,4 +190,86 @@ test("a matching person gets a signed session cookie and read-only access; a tam
   const logout = await fetch(`${url}/auth/logout`, { redirect: "manual" });
   assert.equal(logout.status, 200);
   assert.match(cookies(logout).filegrc_session.raw, /Max-Age=0/);
+});
+
+const HOSTED_ENV = {
+  FILEGRC_GOOGLE_CLIENT_ID: "id",
+  FILEGRC_GOOGLE_CLIENT_SECRET: "secret",
+  FILEGRC_ALLOWED_EMAIL_DOMAIN: "example.com",
+  FILEGRC_SESSION_SECRET: SESSION_SECRET,
+  FILEGRC_PUBLIC_URL: "https://filegrc.example.com"
+};
+
+async function sessionFor(url, email) {
+  return { cookie: `filegrc_session=${cookies(await signInAs(url, email)).filegrc_session.value}` };
+}
+
+function postAuditorLink(url, headers, body = { tag: "", auditId: "" }) {
+  return fetch(`${url}/api/auditor-links`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+}
+
+test("FILEGRC_ADMIN_EMAILS is optional and passed through only when set", () => {
+  assert.equal(hostedAuthFromEnv(HOSTED_ENV).adminEmails, undefined);
+  assert.equal(hostedAuthFromEnv({ ...HOSTED_ENV, FILEGRC_ADMIN_EMAILS: " " }).adminEmails, undefined);
+  assert.equal(hostedAuthFromEnv({ ...HOSTED_ENV, FILEGRC_ADMIN_EMAILS: "a@example.com, b@example.com" }).adminEmails, "a@example.com, b@example.com");
+  assert.equal(hostedAuthFromEnv({ FILEGRC_ADMIN_EMAILS: "a@example.com" }), null);
+});
+
+test("a listed admin may issue auditor links and open the admin page; nothing else opens up", async (context) => {
+  const { url } = await fixture(context, true, " Security@Example.com ,someone@example.com");
+  const admin = await sessionFor(url, "security@example.com");
+  // An empty body passes the sign-in layer and fails auditor-link validation instead.
+  const issued = await postAuditorLink(url, admin);
+  assert.equal(issued.status, 400);
+  assert.match((await issued.json()).error, /Git tag/);
+  const page = await fetch(`${url}/auditor-links`, { headers: admin });
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /action="\/api\/auditor-links"/);
+  const form = await fetch(`${url}/api/auditor-links`, {
+    method: "POST",
+    headers: { ...admin, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ tag: "missing-tag", auditId: "audit-x", hours: "24" })
+  });
+  assert.equal(form.status, 404);
+  const formHtml = await form.text();
+  assert.match(formHtml, /Tag &quot;missing-tag&quot; was not found/);
+  assert.match(formHtml, /value="missing-tag"/);
+  const write = await fetch(`${url}/api/resources/person`, {
+    method: "POST",
+    headers: { ...admin, "content-type": "application/json" },
+    body: "{}"
+  });
+  assert.equal(write.status, 403);
+});
+
+test("a signed-in person who is not listed still gets 403 for auditor links", async (context) => {
+  const { url } = await fixture(context, true, "security@example.com");
+  const other = await sessionFor(url, "approver@example.com");
+  assert.equal((await postAuditorLink(url, other)).status, 403);
+  assert.equal((await fetch(`${url}/auditor-links`, { headers: other })).status, 403);
+  assert.equal((await postAuditorLink(url, {})).status, 401);
+});
+
+test("without FILEGRC_ADMIN_EMAILS hosted mode rejects auditor links for everyone", async (context) => {
+  const { url } = await fixture(context);
+  const owner = await sessionFor(url, "security@example.com");
+  assert.equal((await postAuditorLink(url, owner)).status, 403);
+  assert.equal((await fetch(`${url}/auditor-links`, { headers: owner })).status, 403);
+});
+
+test("an admin email outside the allowed domain is ignored", async (context) => {
+  const { root } = await fixture(context);
+  const path = join(root, "data", "people", "person-approver.json");
+  await writeFile(path, (await readFile(path, "utf8")).replace("approver@example.com", "approver@example.org"));
+  const config = { clientId: CLIENT_ID, clientSecret: "s", allowedDomain: "example.com", sessionSecret: SESSION_SECRET, publicUrl: "https://filegrc.example.com" };
+  const request = (personId) => ({ headers: { cookie: `filegrc_session=${signSession({ personId, exp: Math.floor(Date.now() / 1000) + 60 }, SESSION_SECRET)}` } });
+  const auth = createHostedAuth(root, { ...config, adminEmails: "approver@example.org,security@example.com" });
+  assert.equal(await auth.admin(request("person-approver")), null);
+  assert.deepEqual(await auth.admin(request("person-owner")), { personId: "person-owner", email: "security@example.com" });
+  assert.equal(await auth.admin({ headers: {} }), null);
+  assert.equal(await createHostedAuth(root, config).admin(request("person-owner")), null);
 });
