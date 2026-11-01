@@ -50,6 +50,8 @@ Collect GitHub results with `GITHUB_TOKEN=... npx filegrc collect github --org y
 
 Collect Google Cloud results with `FILEGRC_GCP_CREDENTIALS=key.json npx filegrc collect gcp --project your-project --preview`, then `--apply`. `FILEGRC_GCP_CREDENTIALS` holds a read-only service account key as inline JSON or a file path. The collector checks that no IAM binding grants a role to `allUsers` or `allAuthenticatedUsers` and that Data Access audit logs record reads and writes for all services. The key is never printed or stored.
 
+Collect Google Workspace results with `FILEGRC_WORKSPACE_CREDENTIALS=key.json npx filegrc collect workspace --admin admin@your-domain --preview`, then `--apply`. The service account needs domain-wide delegation for `admin.directory.user.readonly` only and acts for the administrator named by `--admin`. The collector checks that every active user is enrolled in 2-step verification and that at most `--max-admins` users (default 3) are super administrators. The key is never printed or stored.
+
 Move an existing risk register in with `npx filegrc import-risks register.csv --preview`, then `--apply`. A risk with one score gets its rating band and stays marked for likelihood and impact rating. Each risk records the source file and import date. Rerunning skips risks that already exist.
 
 [![FileGRC audit readiness](docs/filegrc-audit.png)](https://filegrc.com)

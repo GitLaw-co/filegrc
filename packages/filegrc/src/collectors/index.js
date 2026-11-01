@@ -5,6 +5,7 @@ import { validateWorkspace } from "../validate.js";
 import { loadWorkspace } from "../workspace.js";
 import { gcpCollector } from "./gcp.js";
 import { githubCollector } from "./github.js";
+import { workspaceCollector } from "./workspace.js";
 
 // A collector reads one external source only when a person runs
 // `filegrc collect <name>`. It reads its token from `tokenVariable` in the
@@ -12,7 +13,7 @@ import { githubCollector } from "./github.js";
 //   { key, title, expectedCondition, sourceDescription, result, observed }
 // `observed` is Markdown with the facts read. The collector never writes;
 // this module turns runs into automated-check and evidence payloads.
-export const COLLECTORS = { github: githubCollector, gcp: gcpCollector };
+export const COLLECTORS = { github: githubCollector, gcp: gcpCollector, workspace: workspaceCollector };
 
 export async function planCollection(input, name, options = {}, env = process.env) {
   const collector = COLLECTORS[name];
