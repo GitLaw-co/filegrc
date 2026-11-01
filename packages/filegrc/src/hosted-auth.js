@@ -11,6 +11,8 @@ export const HOSTED_AUTH_ENV = {
   sessionSecret: "FILEGRC_SESSION_SECRET",
   publicUrl: "FILEGRC_PUBLIC_URL"
 };
+// Optional. Signed-in people listed here may also issue auditor links.
+export const HOSTED_ADMIN_EMAILS_ENV = "FILEGRC_ADMIN_EMAILS";
 const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_ISSUERS = new Set(["https://accounts.google.com", "accounts.google.com"]);
@@ -25,7 +27,8 @@ export function hostedAuthFromEnv(env = process.env) {
   const missing = Object.entries(HOSTED_AUTH_ENV).filter(([key]) => !values[key]).map(([, name]) => name);
   if (missing.length === Object.keys(HOSTED_AUTH_ENV).length) return null;
   if (missing.length) throw new Error(`Hosted mode needs every sign-in variable. Set ${missing.join(", ")} or unset the others.`);
-  return values;
+  const adminEmails = String(env[HOSTED_ADMIN_EMAILS_ENV] ?? "").trim();
+  return adminEmails ? { ...values, adminEmails } : values;
 }
 
 export function createHostedAuth(input, config) {
@@ -37,6 +40,10 @@ export function createHostedAuth(input, config) {
   const redirectUri = new URL("/auth/callback", config.publicUrl).href;
   const tokenEndpoint = config.tokenEndpoint || GOOGLE_TOKEN_URL;
   const secret = config.sessionSecret;
+  // Addresses outside the allowed domain can never sign in, so they are ignored.
+  const adminEmails = new Set((Array.isArray(config.adminEmails) ? config.adminEmails : String(config.adminEmails ?? "").split(","))
+    .map((email) => String(email).trim().toLowerCase())
+    .filter((email) => email && email.split("@").at(-1) === allowedDomain));
 
   async function signIn(email) {
     const domain = email.split("@").at(-1);
@@ -116,7 +123,20 @@ export function createHostedAuth(input, config) {
     return false;
   }
 
-  return { handle };
+  // The signed-in admin, or null. Checked on every request against the current
+  // workspace, so deactivating the Person or editing the list takes effect at once.
+  async function admin(request) {
+    if (!adminEmails.size) return null;
+    const session = verifySession(readCookie(request, SESSION_COOKIE), secret);
+    if (!session) return null;
+    const person = (await loadWorkspace(input)).resources.find((record) => (
+      record.type === "person" && record.id === session.personId && record.status === "active"
+    ));
+    const email = String(person?.email ?? "").trim().toLowerCase();
+    return adminEmails.has(email) ? { personId: person.id, email } : null;
+  }
+
+  return { handle, admin };
 }
 
 export function signSession(payload, secret) {

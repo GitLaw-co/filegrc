@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { createResources, loadWorkspace, migrateModel } from "../src/index.js";
+import { signSession } from "../src/hosted-auth.js";
 import { createFilegrcServer } from "../src/server.js";
 import { makeWorkspace } from "./helpers.js";
 
@@ -174,4 +175,38 @@ test("refuses every write on the auditor listener and changes no file", async (c
   assert.doesNotMatch(await (await fetch(`${base}${viewPath}${new URL(link.url).search}`)).text(), /FileGRC auditor view/);
   assert.equal(await readFile(controlPath, "utf8"), before);
   assert.equal(await git(root, ["status", "--porcelain"]), "");
+});
+
+test("a hosted admin issues a link from the form and the issue is logged", async (context) => {
+  const root = await makeTaggedAuditWorkspace(context);
+  const sessionSecret = "test-session-secret-with-enough-length";
+  const server = createFilegrcServer(root, {
+    now: () => Date.parse("2026-10-31T09:00:00Z"),
+    hostedAuth: {
+      clientId: "client", clientSecret: "secret", allowedDomain: "example.com", sessionSecret,
+      publicUrl: "https://filegrc.example.com", adminEmails: "security@example.com"
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const cookie = `filegrc_session=${signSession({ personId: "person-owner", exp: Math.floor(Date.now() / 1000) + 600 }, sessionSecret)}`;
+  const logged = context.mock.method(console, "log", () => {});
+
+  const response = await fetch(`${base}/api/auditor-links`, {
+    method: "POST",
+    headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ tag: "audit-2026", auditId: "audit-type-2", hours: "3" })
+  });
+  assert.equal(response.status, 201);
+  const linkUrl = /aria-label="Auditor link" value="([^"]+)"/.exec(await response.text())[1].replaceAll("&amp;", "&");
+  assert.equal((await fetch(linkUrl)).status, 200);
+
+  const lines = logged.mock.calls.map(({ arguments: [line] }) => line).filter((line) => line.startsWith("[filegrc audit] "));
+  assert.equal(lines.length, 1);
+  assert.deepEqual(JSON.parse(lines[0].slice("[filegrc audit] ".length)), {
+    event: "auditor-link-issued", personId: "person-owner", email: "security@example.com",
+    tag: "audit-2026", auditId: "audit-type-2", commit: await git(root, ["rev-parse", "audit-2026^{commit}"]),
+    expiresAt: "2026-10-31T12:00:00.000Z"
+  });
 });

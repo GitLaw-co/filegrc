@@ -91,7 +91,7 @@ import {
 } from "./workflow.js";
 import { scaffoldNonmaterialAmendment, saveNonmaterialAmendment } from "./nonmaterial-amendments.js";
 import { loadWorkspace } from "./workspace.js";
-import { APP_SCRIPT, APP_STYLES, renderAcknowledgementsPage, renderHelpIndexPage, renderHelpMissingPage, renderHelpPage, renderIndex } from "./web.js";
+import { APP_SCRIPT, APP_STYLES, renderAcknowledgementsPage, renderAuditorLinksPage, renderHelpIndexPage, renderHelpMissingPage, renderHelpPage, renderIndex } from "./web.js";
 import { assertWorkspaceEngineVersion } from "./runtime-version.js";
 
 const STATE_SESSION_MAX_AGE_MS = 5 * 60_000;
@@ -103,6 +103,7 @@ const RESOURCE_DETAIL_GIT_DEADLINE_MS = 10_000;
 const STATE_CALCULATION_DEADLINE_MS = 120_000;
 const STATE_RESPONSE_WAIT_MS = 1_000;
 const STATE_PENDING = Symbol("pending state calculation");
+const AUDITOR_LINKS_PATH = "/auditor-links";
 
 export function createFilegrcServer(input = process.cwd(), options = {}) {
   assertWorkspaceEngineVersion(input, { allowModelDiagnostics: true });
@@ -154,7 +155,12 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       const attestingPersonId = hostedAuth && url.pathname === "/acknowledgements"
         ? verifySession(sessionCookie(request), options.hostedAuth.sessionSecret)?.personId
         : null;
-      if (hostedAuth && !(attestingPersonId && request.method === "POST")
+      // Issuing auditor links is the other hosted write, open only to FILEGRC_ADMIN_EMAILS.
+      const admin = hostedAuth && (url.pathname === AUDITOR_LINKS_PATH
+        || (request.method === "POST" && url.pathname === "/api/auditor-links"))
+        ? await hostedAuth.admin(request)
+        : null;
+      if (hostedAuth && !(attestingPersonId && request.method === "POST") && !admin
         && await hostedAuth.handle(request, response, url)) return;
       const requestOptions = {
         ...options,
@@ -180,6 +186,12 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       };
       if (["POST", "PUT", "DELETE"].includes(request.method) && !sameOrigin(request)) {
         return json(response, 403, { error: "Cross-origin writes are not allowed." });
+      }
+      if (hostedAuth && url.pathname === AUDITOR_LINKS_PATH) {
+        if (!admin || request.method !== "GET") {
+          return text(response, 403, renderAuditorLinksPage({ denied: true }), "text/html; charset=utf-8");
+        }
+        return text(response, 200, renderAuditorLinksPage({ admin }), "text/html; charset=utf-8");
       }
       if (attestingPersonId && ["GET", "POST"].includes(request.method)) {
         return await acknowledgements(input, request, response, url, attestingPersonId, requestOptions);
@@ -655,8 +667,29 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         return json(response, 200, result);
       }
       if (request.method === "POST" && url.pathname === "/api/auditor-links") {
-        const link = await auditorView.createLink(await readJson(request));
-        return json(response, 201, { ...link, url: `${await auditorBaseUrl()}${link.url}` });
+        const issue = async (payload) => {
+          const link = await auditorView.createLink(payload);
+          if (admin) {
+            console.log(`[filegrc audit] ${JSON.stringify({
+              event: "auditor-link-issued", personId: admin.personId, email: admin.email,
+              tag: link.tag, auditId: link.auditId, commit: link.commit, expiresAt: link.expiresAt
+            })}`);
+          }
+          return { ...link, url: `${await auditorBaseUrl()}${link.url}` };
+        };
+        if (!admin || String(request.headers["content-type"] || "").startsWith("application/json")) {
+          return json(response, 201, await issue(await readJson(request)));
+        }
+        // The admin page posts a plain form and gets the page back with the link.
+        const form = new URLSearchParams(await readForm(request));
+        const values = { tag: form.get("tag") || "", auditId: form.get("auditId") || "", hours: form.get("hours") || "" };
+        try {
+          const link = await issue({ tag: values.tag, auditId: values.auditId, hours: values.hours ? Number(values.hours) : undefined });
+          return text(response, 201, renderAuditorLinksPage({ admin, link, values }), "text/html; charset=utf-8");
+        } catch (error) {
+          const status = statusFor(error);
+          return text(response, status, renderAuditorLinksPage({ admin, values, error: publicErrorMessage(error, status) }), "text/html; charset=utf-8");
+        }
       }
       if (request.method === "GET" && url.pathname === "/api/evidence-packet") {
         return json(response, 200, await prepareEvidencePacket(input, {
