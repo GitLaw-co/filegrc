@@ -5,3 +5,4 @@
 - 2026-10-31 Nick: Yes, as recommended - the card is the spec. Build after FG-001 (or alongside, behind the same flag).
 - 2026-10-31 Nick: Yes, as recommended - the card is the spec. Reuse the evidence packet indexes; expiring links.
 - 2026-10-31 Nick: Yes, as recommended - the card is the spec. Collector interface + GitHub first, token from an env var, tests on fixtures; GCP and Workspace as follow-up items.
+- 2026-11-01 Nick: Yes - build it as described. Laptop checks come from Google Endpoint Verification through the Workspace collector.

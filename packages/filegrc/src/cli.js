@@ -106,6 +106,7 @@ const BOOLEAN_FLAGS = new Set([
   "complete",
   "correct-finalized",
   "current",
+  "devices",
   "draft",
   "help",
   "json",
@@ -1072,6 +1073,10 @@ export async function runCli(argv = process.argv.slice(2)) {
       project: flags.project,
       admin: flags.admin,
       maxAdmins: flags["max-admins"],
+      devices: flags.devices,
+      sinceDays: flags["since-days"],
+      minMacos: flags["min-macos"],
+      minWindowsBuild: flags["min-windows-build"],
       repos: list(flags.repos),
       controls: list(flags.controls),
       component: flags.component,
@@ -1654,6 +1659,7 @@ skipped and never changed, so rerunning the same file is safe.`);
     [--controls control-id,...] [--cadence daily] [--json]
   FILEGRC_GCP_CREDENTIALS=key.json filegrc collect gcp --preview|--apply --project project-id (other flags as for github; checks public IAM bindings and Data Access audit logs)
   FILEGRC_WORKSPACE_CREDENTIALS=key.json filegrc collect workspace --preview|--apply --admin admin-email [--max-admins 3] (other flags as for github; checks 2-step verification enrolment and super administrator count)
+    [--devices [--since-days 30] [--min-macos 15] [--min-windows-build 22000]] (adds the endpoint device inventory and device checks)
 
 Read source settings once and record each result as dated evidence of an
 automated check. FileGRC runs a collector only when you run this command.
@@ -1669,6 +1675,10 @@ workspace checks that every active Google Workspace user is enrolled in 2-step
 verification and that at most --max-admins users (default 3) are super
 administrators. The service account needs domain-wide delegation for the scope
 admin.directory.user.readonly only; --admin names the administrator it acts for.
+--devices also requests cloud-identity.devices.readonly and records the endpoint
+devices synced in the last --since-days days (one per serial number) with
+checks for disk encryption, screen lock, OS version (macOS --min-macos, Windows
+build --min-windows-build; other systems are not checked) and owner email.
 
 --component names the source Component and --collector the Person who runs the
 collection. A missing check is created as an active automated check linked to
