@@ -165,19 +165,27 @@ export function renderAuditorLinksPage({ admin = null, link = null, values = {},
 
 // Read-only help pages from the workspace `faq/` folder. renderMarkdown escapes
 // raw HTML, so a page cannot inject markup.
-export function renderHelpIndexPage(pages = []) {
-  const items = pages.map(({ slug, title }) => `<li><a href="/faq/${escapeHtml(slug)}">${escapeHtml(title)}</a></li>`).join("");
-  return helpDocument("Help", `<div class="page-intro"><div><p class="kicker">Help</p><h2>Help</h2></div></div>
-    ${items ? `<ul class="panel">${items}</ul>` : `<p class="empty">This program has no help pages.</p>`}`);
+// With `fragment`, each returns only the page body for the app shell (#/help), and links
+// between help pages stay inside the shell.
+export function renderHelpIndexPage(pages = [], { fragment = false } = {}) {
+  const base = fragment ? "#/help" : "/faq";
+  const items = pages.map(({ slug, title }) => `<li><a href="${base}/${escapeHtml(slug)}">${escapeHtml(title)}</a></li>`).join("");
+  const body = `<div class="page-intro"><div><p class="kicker">Help</p><h2>Help</h2></div></div>
+    ${items ? `<ul class="panel help-index">${items}</ul>` : `<p class="empty">This program has no help pages.</p>`}`;
+  return fragment ? body : helpDocument("Help", body);
 }
 
-export function renderHelpPage({ title, source }) {
-  return helpDocument(title, `<nav class="breadcrumbs"><a href="/faq">Help</a><span>/</span><span>${escapeHtml(title)}</span></nav>
-    <article class="panel markdown">${renderMarkdown(source)}</article>`);
+export function renderHelpPage({ title, source }, { fragment = false } = {}) {
+  const base = fragment ? "#/help" : "/faq";
+  const html = renderMarkdown(source);
+  const body = `<nav class="breadcrumbs"><a href="${base}">Help</a><span>/</span><span>${escapeHtml(title)}</span></nav>
+    <article class="panel markdown help-article">${html}</article>`;
+  return fragment ? body : helpDocument(title, body);
 }
 
-export function renderHelpMissingPage() {
-  return helpDocument("Help page not found", `<h2>Help page not found</h2><p><a href="/faq">See all help pages</a></p>`);
+export function renderHelpMissingPage({ fragment = false } = {}) {
+  const body = `<h2>Help page not found</h2><p><a href="${fragment ? "#/help" : "/faq"}">See all help pages</a></p>`;
+  return fragment ? body : helpDocument("Help page not found", body);
 }
 
 const ACTION_STATUS_LABELS = {
@@ -191,8 +199,11 @@ const ACTION_STATUS_LABELS = {
 const ACTION_OUTCOME_LABELS = { approved: "Approved", feedback: "Feedback", rejected: "Rejected" };
 
 // Hosted mode's action register page. Filters are a plain GET form and each
-// decision is a plain POST form, so the page works without JavaScript.
-export function renderActionsPage({ viewer = null, exists = true, people = [], allActions = [], actions = [], filters = {}, problems = [], decided = null, error = null }) {
+// decision is a plain POST form. The app shows the page at #/actions and wires those
+// forms to fetch; a POST without JavaScript still gets a full page back.
+export function renderActionsPage({ viewer = null, exists = true, people = [], allActions = [], actions = [], filters = {}, problems = [], decided = null, error = null, fragment = false }) {
+  // As a fragment the page lives in the app shell at #/actions, so its links stay there.
+  const base = fragment ? "#/actions" : "/actions";
   const personName = (id) => people.find((person) => person.id === id)?.title || id || "Nobody";
   const ownerIds = [...new Set(allActions.map(({ ownerId }) => ownerId).filter(Boolean))]
     .sort((a, b) => personName(a).localeCompare(personName(b)));
@@ -201,7 +212,7 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
   const href = (changes) => {
     const next = new URLSearchParams();
     for (const key of keys) next.set(key, changes[key] ?? filters[key] ?? "");
-    return `/actions?${escapeHtml(next.toString())}`;
+    return `${base}?${escapeHtml(next.toString())}`;
   };
   const statusLabel = (value) => value === "waiting" ? "Waiting for a decision" : value === "all" ? "Any" : ACTION_STATUS_LABELS[value] || value;
   const menus = [
@@ -223,7 +234,7 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
     <div class="filter-buttons">${menus.map(menu).join("")}</div>
     <span class="filter-count">${actions.length} of ${allActions.length} actions</span>
   </form>
-  ${chips.length ? `<div class="filter-chips">${chips.join("")}<a class="filter-clear" href="/actions?owner=&amp;status=all">Clear all</a></div>` : ""}</div>`;
+  ${chips.length ? `<div class="filter-chips">${chips.join("")}<a class="filter-clear" href="${base}?owner=&amp;status=all">Clear all</a></div>` : ""}</div>`;
   const decidedNotice = decided?.actionId
     ? `<p class="panel" role="status">${escapeHtml({ approved: "Approved", feedback: "Feedback sent for", rejected: "Rejected" }[decided.outcome] || "Saved")} ${escapeHtml(decided.actionId)}. Your decision is saved and shows below as waiting to be filed. The register itself is updated at the next review.</p>`
     : "";
@@ -234,7 +245,17 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
   const body = !exists
     ? `<p class="empty">This program has no action register. Add files to the actions/ folder to start one.</p>`
     : `${filterForm}
-    ${cards || `<p class="empty">No actions match these filters. <a href="/actions?owner=&amp;status=all">Show all actions</a></p>`}`;
+    ${cards || `<p class="empty">No actions match these filters. <a href="${base}?owner=&amp;status=all">Show all actions</a></p>`}`;
+  const content = `<div class="page-intro"><div>
+      <p class="kicker">${escapeHtml(viewer?.name || viewer?.email || "Action register")}</p>
+      <h1 class="action-heading">Actions</h1>
+      <p>${escapeHtml(intro)}</p>
+    </div></div>
+    ${error ? `<p class="panel dialog-error" role="alert">${escapeHtml(error)}</p>` : ""}
+    ${problems.map((problem) => `<p class="panel dialog-error" role="alert">${escapeHtml(problem)}</p>`).join("")}
+    ${decidedNotice}
+    ${body}`;
+  if (fragment) return `<div class="action-page">${content}</div>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -246,15 +267,7 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
 <body class="standalone-page">
   <a class="skip-link" href="#main">Skip to content</a>
   <main id="main" class="page action-page">
-    <div class="page-intro"><div>
-      <p class="kicker">${escapeHtml(viewer?.name || viewer?.email || "Action register")}</p>
-      <h1 class="action-heading">Actions</h1>
-      <p>${escapeHtml(intro)}</p>
-    </div></div>
-    ${error ? `<p class="panel dialog-error" role="alert">${escapeHtml(error)}</p>` : ""}
-    ${problems.map((problem) => `<p class="panel dialog-error" role="alert">${escapeHtml(problem)}</p>`).join("")}
-    ${decidedNotice}
-    ${body}
+    ${content}
     <p><a href="/">Open the program</a>${viewer ? ` · <a href="/auth/logout">Sign out</a>` : ""}</p>
   </main>
   <script>
@@ -497,6 +510,7 @@ async function start() {
 }
 
 function handleRouteChange() {
+  serverPageCache = null;
   document.querySelectorAll("dialog.editor[open], dialog.commit-dialog[open], dialog.alert-dialog[open]").forEach((dialog) => dialog.close());
   render();
   loadStateForRoute();
@@ -519,6 +533,8 @@ function render() {
   if (state.refreshingAfterMutation) renderStateLoading(main, route, []);
   else if (waitingFor.length) renderStateLoading(main, route, waitingFor);
   else if (route.name === "home") renderHome(main);
+  else if (route.name === "actions") renderServerPage(main, route, "/actions?" + withFragment(route.params));
+  else if (route.name === "help") renderServerPage(main, route, "/faq" + (route.slug ? "/" + encodeURIComponent(route.slug) : "") + "?fragment=1");
   else if (route.name === "stage") renderStageOverview(main, route.stageId, route.params);
   else if (route.name === "policies") renderPoliciesPage(main, route.params);
   else if (route.name === "retention-schedule" && modelSupports("retention-schedule-approval")) renderRetentionSchedulePage(main, route.params);
@@ -554,7 +570,7 @@ function normalizeAppState(next) {
 }
 
 function blockingStateSections(route) {
-  if (route.name === "home") return [];
+  if (route.name === "home" || route.name === "actions" || route.name === "help") return [];
   if (route.name === "repository") return ["repository"];
   if (route.name === "list" && ["requirement", "control", "commitment", "complementary-control"].includes(route.type)) return ["program"];
   if (route.name === "detail" && ["program", "requirement", "control", "commitment", "complementary-control"].includes(route.type)) return ["program"];
@@ -653,6 +669,8 @@ function parseRoute() {
   if (parts.length === 3 && parts[0] === "resource" && parts[1] && parts[2]) return { name: "detail", type: parts[1], id: parts[2], params: new URLSearchParams(query) };
   if (parts.length === 1 && parts[0] === "organization") return { name: "organization" };
   if (parts.length === 1 && parts[0] === "repository") return { name: "repository" };
+  if (parts.length === 1 && parts[0] === "actions" && document.body.dataset.actionsHref) return { name: "actions", params: new URLSearchParams(query) };
+  if (parts[0] === "help" && parts.length <= 2 && document.body.dataset.helpHref) return { name: "help", slug: parts[1] || "", params: new URLSearchParams(query) };
   return { name: "missing" };
 }
 
@@ -694,7 +712,7 @@ function buildNavigation(route) {
   const organizationCurrent = route.name === "organization" || route.name === "repository" || ["workspace", "renderer-settings"].includes(route.type);
   const organizationName = state.workspace.organizationName || "Organization";
   const initial = organizationName.trim().charAt(0).toUpperCase() || "O";
-  return '<aside class="sidebar" id="sidebar-navigation"><button class="nav-close" type="button" aria-label="Close navigation">×</button><a href="#/" class="brand"' + (route.name === "home" ? ' aria-current="page"' : "") + '><img class="mark" src="./logo-mark-white.png" alt="" width="39" height="39"><span><strong>' + esc(state.workspace.brandName || "FileGRC") + '</strong><small>' + esc(state.workspace.brandSubtitle || "SOC 2 workspace") + '</small></span></a><label class="search mobile-sidebar-search"><span aria-hidden="true">⌕</span><input data-global-search type="search" placeholder="Search records" aria-label="Search records"></label><nav class="sidebar-nav">' + stages + '</nav><div class="automation-nav-panel"><p>' + esc(HOSTED_AUTOMATION.compactMessage) + '</p><a class="hosted-automation-nav" href="' + esc(hostedNavigation()) + '" target="_blank" rel="noopener noreferrer">Autopilot <span aria-hidden="true">↗</span></a></div><div class="sidebar-footer">' + helpNavigation() + '<a class="organization-nav ' + (organizationCurrent ? "current" : "") + '" href="#/organization"><span class="organization-mark">' + esc(initial) + '</span><span><strong>' + esc(organizationName) + '</strong><small>Organization</small></span><span class="organization-arrow">›</span></a></div></aside><button class="nav-scrim" type="button" aria-label="Close navigation"></button>';
+  return '<aside class="sidebar" id="sidebar-navigation"><button class="nav-close" type="button" aria-label="Close navigation">×</button><a href="#/" class="brand"' + (route.name === "home" ? ' aria-current="page"' : "") + '><img class="mark" src="./logo-mark-white.png" alt="" width="39" height="39"><span><strong>' + esc(state.workspace.brandName || "FileGRC") + '</strong><small>' + esc(state.workspace.brandSubtitle || "SOC 2 workspace") + '</small></span></a><label class="search mobile-sidebar-search"><span aria-hidden="true">⌕</span><input data-global-search type="search" placeholder="Search records" aria-label="Search records"></label><nav class="sidebar-nav">' + primaryNavigation(route) + stages + '</nav>' + sidebarGuidePanel() + '<div class="sidebar-footer">' + helpNavigation(route) + '<a class="organization-nav ' + (organizationCurrent ? "current" : "") + '" href="#/organization"><span class="organization-mark">' + esc(initial) + '</span><span><strong>' + esc(organizationName) + '</strong><small>Organization</small></span><span class="organization-arrow">›</span></a></div></aside><button class="nav-scrim" type="button" aria-label="Close navigation"></button>';
 }
 
 function readinessStageForRoute(route) {
@@ -748,6 +766,10 @@ function renderSidebarUtility(utility, route, direct = false) {
 function topbar(route) {
   const title = route.name === "home"
     ? "Program Overview"
+    : route.name === "actions"
+      ? "Actions"
+    : route.name === "help"
+      ? "Help"
     : route.name === "stage"
       ? READINESS_STAGES.find((stage) => stage.id === route.stageId)?.title || "Program"
     : route.name === "organization"
@@ -854,9 +876,158 @@ function renderHome(main) {
     : "";
   const operationPanels = obligationPanel + eventPanel;
   const overviewPanels = operationPanels + auditPanel;
-  main.innerHTML = '<div class="page home-page"><section class="hero overview-hero"><div><p class="kicker">Current program state</p><h2>' + esc(titleCase(state.workspace.title)) + '</h2><p>' + esc(state.workspace.description || "Governance, risk, controls, evidence, and audit work maintained as plain files in Git.") + '</p></div></section>' + setupBanner + readinessOverview() +
+  main.innerHTML = '<div class="page home-page">' + homeActionsPanel() + '<section class="hero overview-hero"><div><p class="kicker">Current program state</p><h2>' + esc(titleCase(state.workspace.title)) + '</h2><p>' + esc(state.workspace.description || "Governance, risk, controls, evidence, and audit work maintained as plain files in Git.") + '</p></div></section>' + setupBanner + readinessOverview() +
     (overviewPanels ? '<div class="overview-grid">' + overviewPanels + '</div>' : '') + '</div>';
   main.querySelector("#resume-setup")?.addEventListener("click", () => requestOnboarding({ setupOnly: true }));
+  if (document.body.dataset.actionsHref && !state.actionSummary && !actionSummaryRequest) loadActionSummary();
+}
+
+let actionSummaryRequest = null;
+
+function loadActionSummary() {
+  actionSummaryRequest = fetchJson("/api/actions/summary").then((result) => {
+    state.actionSummary = result?.summary || { counts: {}, items: [] };
+  }).catch(() => {
+    state.actionSummary = { counts: {}, items: [], failed: true };
+  }).finally(() => {
+    actionSummaryRequest = null;
+    const route = parseRoute();
+    if (route.name === "home") render();
+    else {
+      const nav = root.querySelector(".sidebar-primary-nav");
+      if (nav) nav.outerHTML = primaryNavigation(route);
+    }
+  });
+}
+
+// The first thing on the overview: what is waiting on the signed-in person, and how
+// to get it done.
+function homeActionsPanel() {
+  const guide = workspaceGuide();
+  const guideCard = guide
+    ? '<section class="panel guide-panel"><div class="panel-head"><div><p class="kicker">Getting work done</p><h3>' + esc(guide.title) + '</h3></div></div>' + (guide.message ? '<p class="guide-panel-copy">' + esc(guide.message) + '</p>' : "") + guideLink(guide, "button", "Open the guide") + '</section>'
+    : "";
+  if (!document.body.dataset.actionsHref) return guideCard ? '<div class="home-actions-grid">' + guideCard + '</div>' : "";
+  const summary = state.actionSummary;
+  let body;
+  if (!summary) body = '<p class="home-actions-status" role="status"><span class="spinner" aria-hidden="true"></span> Loading your actions…</p>';
+  else if (summary.failed) body = '<p class="home-actions-status" role="alert">Actions could not load. <a href="#/actions">Open the Actions page</a>.</p>';
+  else {
+    const counts = summary.counts || {};
+    const mine = summary.scope === "viewer";
+    const stat = (value, label, tone) => '<div class="home-action-stat' + (tone && value ? " " + tone : "") + '"><strong>' + esc(String(value || 0)) + '</strong><span>' + esc(label) + '</span></div>';
+    const stats = '<div class="home-action-stats">' + stat(counts.waiting, mine ? "Waiting on you" : "Waiting for a decision") + stat(counts.blocking, "Block the period start", "warn") + stat(counts.overdue, "Overdue", "bad") + '</div>';
+    const items = (summary.items || []).map((item) => {
+      const meta = [item.id, item.priority ? String(item.priority).toUpperCase() : "", item.due ? "Due " + item.due : "", mine ? "" : item.ownerName || ""].filter(Boolean).join(" · ");
+      const tags = (item.overdue ? '<span class="badge bad">Overdue</span>' : "") + (item.blocksPeriodStart ? '<span class="badge warn">Blocks start</span>' : "");
+      return '<li><a href="#/actions?q=' + encodeURIComponent(item.id) + '&amp;owner=&amp;status=all"><span class="home-action-copy"><strong>' + esc(item.title || item.id) + '</strong><small>' + esc(meta) + '</small></span><span class="home-action-tags">' + tags + '</span></a></li>';
+    }).join("");
+    const more = counts.waiting > (summary.items || []).length ? '<p class="home-actions-more">' + esc(String(counts.waiting - summary.items.length)) + ' more waiting.</p>' : "";
+    body = stats + (items ? '<ul class="home-action-list">' + items + '</ul>' + more : '<p class="home-actions-status">' + (mine ? "Nothing is waiting on you." : "Nothing is waiting for a decision.") + (counts.waitingEveryone ? " " + esc(String(counts.waitingEveryone)) + " actions wait on others." : "") + '</p>');
+  }
+  const actionsPanel = '<section class="panel home-actions-panel"><div class="panel-head"><div><p class="kicker">Actions</p><h3>' + (summary?.scope === "everyone" ? "Waiting for a decision" : "Waiting on you") + '</h3></div><a class="button primary" href="#/actions">Open Actions</a></div>' + body + '</section>';
+  return '<div class="home-actions-grid' + (guideCard ? "" : " single") + '">' + actionsPanel + guideCard + '</div>';
+}
+
+function withFragment(params) {
+  const query = new URLSearchParams(params || "");
+  query.set("fragment", "1");
+  return query.toString();
+}
+
+// Actions and Help are rendered by the server; the app shows them in its own shell
+// and keeps their links, filters and decisions inside it. The last page is kept, so a
+// re-render of the shell (a state refresh) repaints it instead of fetching it again.
+let serverPageToken = 0;
+let serverPageCache = null;
+
+function renderServerPage(main, route, url, init) {
+  if (!init && serverPageCache?.url === url) {
+    paintServerPage(main, route, serverPageCache);
+    return;
+  }
+  const token = ++serverPageToken;
+  if (!init) main.innerHTML = '<div class="page"><p class="home-actions-status" role="status"><span class="spinner" aria-hidden="true"></span> Loading…</p></div>';
+  fetch(url, { credentials: "same-origin", headers: { accept: "text/html" }, ...(init || {}) })
+    .then(async (response) => {
+      if (/\/auth\//.test(new URL(response.url, location.href).pathname)) {
+        location.href = "/auth/login";
+        return null;
+      }
+      if (!/text\/html/i.test(response.headers.get("content-type") || "")) {
+        return { url: null, landed: "", html: '<p class="panel dialog-error" role="alert">This page could not load (' + esc(String(response.status)) + '). Reload and try again.</p>' };
+      }
+      return { url, landed: response.url, html: await response.text() };
+    })
+    .catch(() => ({ url: null, landed: "", html: '<p class="panel dialog-error" role="alert">This page could not load. Check your connection and try again.</p>' }))
+    .then((page) => {
+      if (!page || token !== serverPageToken) return;
+      const landed = new URL(page.landed || url, location.href);
+      const decided = new URLSearchParams(landed.search).get("decided");
+      if (route.name === "actions" && landed.pathname === "/actions") {
+        const query = new URLSearchParams(landed.search);
+        query.delete("fragment");
+        query.delete("decided");
+        query.delete("outcome");
+        const hash = "#/actions" + (query.size ? "?" + query.toString() : "");
+        page.url = "/actions?" + withFragment(query);
+        if (location.hash !== hash) history.replaceState(null, "", hash);
+      }
+      if (page.url) serverPageCache = page;
+      const current = root.querySelector("main");
+      if (!current || parseRoute().name !== route.name) return;
+      paintServerPage(current, route, page);
+      if (decided) {
+        current.querySelector("#" + CSS.escape(decided))?.scrollIntoView({ block: "start" });
+        state.actionSummary = null;
+        loadActionSummary();
+      }
+    });
+}
+
+function paintServerPage(main, route, page) {
+  main.innerHTML = '<div class="page server-page">' + page.html + '</div>';
+  if (route.name === "actions") wireActionsPage(main, route);
+  // In-page links in a help article (#section) scroll instead of changing the app route.
+  if (route.name === "help") {
+    main.querySelector(".help-article")?.addEventListener("click", (event) => {
+      const link = event.target.closest('a[href^="#"]');
+      const id = link?.getAttribute("href").slice(1);
+      if (!id || id.startsWith("/")) return;
+      event.preventDefault();
+      main.querySelector("#" + CSS.escape(id))?.scrollIntoView({ block: "start" });
+    });
+  }
+}
+
+function wireActionsPage(main, route) {
+  const filter = main.querySelector("form.filter-toolbar");
+  filter?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const query = new URLSearchParams(new FormData(filter));
+    location.hash = "#/actions?" + query.toString();
+  });
+  for (const form of main.querySelectorAll('form[method="post"][action="/actions"]')) {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const body = new URLSearchParams(new FormData(form));
+      body.set("fragment", "1");
+      setButtonBusy(form.querySelector("button[type=submit]"), true, "Saving");
+      renderServerPage(main, route, "/actions", { method: "POST", body, headers: { accept: "text/html", "content-type": "application/x-www-form-urlencoded" } });
+    });
+  }
+  const menus = [...main.querySelectorAll(".filter-menu")];
+  const close = (except) => menus.forEach((menu) => { if (menu !== except) menu.open = false; });
+  menus.forEach((menu) => {
+    menu.addEventListener("toggle", () => { if (menu.open) close(menu); });
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && menu.open) { menu.open = false; menu.querySelector("summary").focus(); }
+    });
+    menu.addEventListener("focusout", (event) => {
+      if (event.relatedTarget && !menu.contains(event.relatedTarget)) menu.open = false;
+    });
+  });
+  main.querySelector(".action-page")?.addEventListener("pointerdown", (event) => close(menus.find((menu) => menu.contains(event.target))));
 }
 
 function overviewSectionStatus(section, label) {
@@ -1666,12 +1837,24 @@ function collectionReviewVisible(type) {
 }
 
 // The server sets data-help-href only when the workspace has help pages in faq/,
-// and data-actions-href only when it has an action register in actions/.
-function helpNavigation() {
-  const actions = document.body.dataset.actionsHref;
+// and data-actions-href only when it has an action register in actions/. Both open
+// inside the app, at #/help and #/actions.
+function helpNavigation(route = {}) {
   const help = document.body.dataset.helpHref;
-  return (actions ? '<a class="help-nav" href="' + esc(actions) + '">Actions</a>' : "")
-    + (help ? '<a class="help-nav" href="' + esc(help) + '">Help</a>' : "");
+  return help ? '<a class="help-nav' + (route.name === "help" ? " current" : "") + '" href="#/help">Help</a>' : "";
+}
+
+function primaryNavigation(route = {}) {
+  const actions = document.body.dataset.actionsHref;
+  if (!actions) return "";
+  const count = state.actionSummary?.counts?.waiting;
+  return '<div class="sidebar-primary-nav"><a class="' + (route.name === "actions" ? "current" : "") + '" href="#/actions"><span>Actions</span>' + (count ? '<span class="sidebar-action-count" aria-label="' + count + ' waiting for your decision">' + count + '</span>' : "") + '</a></div>';
+}
+
+function sidebarGuidePanel() {
+  const guide = workspaceGuide();
+  if (guide) return '<div class="automation-nav-panel guide-nav-panel"><strong>' + esc(guide.title) + '</strong>' + (guide.message ? '<p>' + esc(guide.message) + '</p>' : "") + guideLink(guide, "hosted-automation-nav", "Open the guide") + '</div>';
+  return '<div class="automation-nav-panel"><p>' + esc(HOSTED_AUTOMATION.compactMessage) + '</p><a class="hosted-automation-nav" href="' + esc(hostedNavigation()) + '" target="_blank" rel="noopener noreferrer">Autopilot <span aria-hidden="true">↗</span></a></div>';
 }
 
 function hostedNavigation() {
@@ -1680,6 +1863,7 @@ function hostedNavigation() {
 }
 
 function renderHostedAutomation(stageId = "controls") {
+  if (workspaceGuide()) return "";
   const operating = stageId === "run";
   const recommendation = operating
     ? state.programReadiness?.hostedAutomation?.operating || OPERATING_HOSTED_AUTOMATION
@@ -1688,6 +1872,24 @@ function renderHostedAutomation(stageId = "controls") {
   if (!operating && recommendation?.status !== "recommended") return "";
   const skip = operating ? "" : '<a class="button hosted-automation-secondary" href="#program-content-cutover">' + esc(recommendation.continueWithout.title) + '</a>';
   return '<section class="hosted-automation hosted-automation-hero"><div class="hosted-automation-copy"><p class="kicker">' + 'Recommended next action · Optional' + '</p><h2>' + esc(recommendation.title) + '</h2><p class="hosted-automation-lead">' + esc(recommendation.compactMessage) + '</p><div class="hosted-automation-actions"><a class="button hosted-automation-primary" href="' + esc(recommendation.href) + '" target="_blank" rel="noopener noreferrer">' + esc(recommendation.shortTitle) + ' ↗</a>' + skip + '</div><p class="hosted-automation-note">Autopilot is optional for readiness.</p></div><div class="hosted-automation-details"><p class="hosted-automation-price">' + esc(recommendation.priceAmount) + ' <span>' + esc(recommendation.priceUnit) + '</span></p></div></section>';
+}
+
+// The workspace record can name its own guide (guideTitle, guideMessage, guideHref);
+// it then takes the place of the hosted Autopilot promotion.
+function workspaceGuide() {
+  const workspace = state.workspace || {};
+  const href = String(workspace.guideHref || "").trim();
+  if (!href || !/^(#\/|\/(?!\/)|https:\/\/)/.test(href)) return null;
+  return {
+    href,
+    title: workspace.guideTitle || "How to get work done",
+    message: workspace.guideMessage || "",
+    external: href.startsWith("https://")
+  };
+}
+
+function guideLink(guide, className, label) {
+  return '<a class="' + className + '" href="' + esc(guide.href) + '"' + (guide.external ? ' target="_blank" rel="noopener noreferrer"' : "") + '>' + esc(label) + (guide.external ? ' <span aria-hidden="true">↗</span>' : ' <span aria-hidden="true">→</span>') + '</a>';
 }
 
 function renderFirstOperatingTasks(preview) {

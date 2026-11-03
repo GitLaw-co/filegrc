@@ -82,8 +82,8 @@ test("serves the theme script after the app script and keeps it parseable", () =
 test("maps each FileGRC button style to one Basecoat variant", () => {
   const buttons = THEME_CLASS_MAP.filter((rule) => rule.className === "bc-btn");
   assert.deepEqual(buttons.map((rule) => [rule.selector, rule.variant]), [
-    [".button.hosted-automation-primary", "outline"],
-    [".button.hosted-automation-secondary", "ghost"],
+    [".button.hosted-automation-primary", "primary"],
+    [".button.hosted-automation-secondary", "outline"],
     [".button.primary", "primary"],
     [".button.danger-action", "destructive"],
     [".button.danger", "destructive"],

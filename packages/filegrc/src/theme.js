@@ -169,9 +169,9 @@ export const THEME_STYLES = String.raw`
   --fg-ink:var(--foreground);--fg-muted:var(--muted-foreground);--fg-line:var(--border);--fg-paper:var(--background);
   --fg-panel:var(--card);--fg-accent:var(--primary);--fg-accent-soft:var(--muted);--fg-accent-light:var(--ring);
   --fg-accent-wash:var(--muted);--fg-focus:var(--muted-foreground);--fg-amber:var(--fg-c-warning-ink);--fg-red:var(--destructive);
-  --fg-sidebar:oklch(.205 0 0);--fg-primary-gradient:var(--fg-c-inverse);--fg-surface:var(--muted);--fg-surface-soft:var(--muted);
+  --fg-sidebar:var(--sidebar);--fg-primary-gradient:var(--fg-c-inverse);--fg-surface:var(--muted);--fg-surface-soft:var(--muted);
   --fg-surface-muted:var(--muted);--fg-field:transparent;--fg-field-readonly:var(--muted);
-  --fg-code-bg:oklch(.205 0 0);--fg-code-ink:oklch(.985 0 0);--fg-shadow:0 1px 2px 0 rgb(0 0 0/.05);
+  --fg-code-bg:var(--muted);--fg-code-ink:var(--foreground);--fg-shadow:0 1px 2px 0 rgb(0 0 0/.05);
   --fg-c-inverse:var(--primary);--fg-c-inverse-ink:var(--primary-foreground);--fg-c-inverse-text:var(--primary);--fg-c-ink:var(--foreground);
   --fg-c-inverse-ink-muted:color-mix(in oklab,var(--primary-foreground) 72%,transparent);
   --fg-c-accent-tint:var(--muted);--fg-c-accent-border:var(--border);--fg-c-border:var(--border);
@@ -194,10 +194,86 @@ body{background:var(--background);color:var(--foreground);font-family:var(--font
 :is(.page-intro,.detail-head,.dialog-head,.section-head,.stage-overview-hero,.group-overview-head,.finish-step,.policy-content-table>.section-head) h2{font-weight:600}
 .kicker,.eyebrow{color:var(--muted-foreground)}
 
-/* Sidebar: Basecoat's dark sidebar palette in both modes, so FileGRC's light-on-dark
-   navigation styles keep their contrast. */
-.sidebar{background:var(--fg-sidebar);border-right:1px solid oklch(1 0 0/.1)}
+/* Sidebar: Basecoat's sidebar palette, light in light mode and dark in dark mode, so the
+   navigation matches the page instead of sitting on a fixed dark panel. */
+.sidebar{background:var(--sidebar);color:var(--sidebar-foreground);border-right:1px solid var(--sidebar-border)}
 .nav-scrim{background:rgb(0 0 0/.5)}
+.brand strong{color:var(--sidebar-foreground)}
+.brand small,.nav-stage-copy small,.organization-nav small,.organization-arrow,.nav-items small{color:var(--muted-foreground)}
+.brand .mark{background:var(--sidebar-primary);padding:7px;box-sizing:border-box}
+.nav-stage-copy strong{font-size:13px}
+.nav-stage-copy small{font-size:11px}
+.organization-nav strong,.help-nav{font-size:13px}
+.organization-nav small{font-size:11px}
+:is(.nav-home,.nav-items a,.nav-stage>.nav-heading,.nav-heading-row>.nav-heading,.help-nav,.organization-nav){color:var(--sidebar-foreground)}
+:is(.nav-heading,.nav-subgroup>.nav-subheading,.nav-subheading-row,.nav-toggle){color:var(--muted-foreground)}
+:is(.nav-home,.nav-items a,.nav-stage>.nav-heading,.nav-heading-row>.nav-heading,.nav-toggle,.nav-subheading-row,.help-nav,.organization-nav):hover,
+:is(.nav-home,.nav-items a,.nav-heading-row>.nav-heading,.organization-nav).current,.brand[aria-current=page]{background:var(--sidebar-accent);color:var(--sidebar-accent-foreground)}
+.nav-items a.current,.nav-heading-row>.nav-heading.current{font-weight:600}
+.nav-stage-number,.organization-mark{border-color:var(--sidebar-border);background:var(--background);color:var(--sidebar-foreground)}
+.nav-heading-row>.nav-heading.current .nav-stage-number{background:var(--sidebar-primary);border-color:var(--sidebar-primary);color:var(--sidebar-primary-foreground)}
+.nav-stage>.nav-items{border-left-color:var(--sidebar-border)}
+.sidebar-footer,.side-foot{background:var(--sidebar);border-top:1px solid var(--sidebar-border);color:var(--sidebar-foreground)}
+.sidebar .mobile-sidebar-search{background:var(--background);border-color:var(--input);color:var(--muted-foreground)}
+.mobile-sidebar-search input{color:var(--foreground)}
+.nav-close{border-color:var(--border);background:var(--background);color:var(--foreground)}
+.sidebar-primary-nav{display:grid;gap:2px;margin:0 0 12px}
+.sidebar-primary-nav a{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:var(--radius-md);color:var(--sidebar-foreground);font-size:14px;font-weight:600;text-decoration:none}
+.sidebar-primary-nav a:hover,.sidebar-primary-nav a.current{background:var(--sidebar-accent);color:var(--sidebar-accent-foreground)}
+.sidebar-action-count{min-width:22px;padding:1px 7px;border-radius:999px;background:var(--sidebar-primary);color:var(--sidebar-primary-foreground);font-size:11px;font-weight:600;text-align:center}
+
+/* Guide card in the sidebar: replaces the hosted Autopilot promotion when the workspace
+   names its own guide, and takes the light card look either way. */
+.automation-nav-panel{border:1px solid var(--sidebar-border);background:var(--background);box-shadow:0 1px 2px 0 rgb(0 0 0/.05)}
+.automation-nav-panel p{color:var(--muted-foreground)}
+.automation-nav-panel strong{display:block;margin:0 0 4px;color:var(--foreground);font-size:13px}
+.hosted-automation-nav{border:1px solid var(--primary);background:var(--primary);color:var(--primary-foreground);box-shadow:none;font-size:13px;font-weight:600}
+.hosted-automation-nav:hover{border-color:var(--primary);background:color-mix(in oklab,var(--primary) 88%,transparent)}
+.hosted-automation-nav:focus-visible{outline-color:var(--ring)}
+
+/* Overview: Actions waiting on the viewer, and the workspace guide. */
+.home-actions-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start;gap:16px;margin:0 0 16px}
+.home-actions-grid.single{grid-template-columns:1fr}
+.home-actions-grid>.panel{margin:0}
+.home-actions-panel .panel-head,.guide-panel .panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.home-action-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0}
+.home-action-stat{padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--background)}
+.home-action-stat strong{display:block;font-size:24px;line-height:1.1;font-weight:600}
+.home-action-stat span{display:block;margin-top:4px;color:var(--muted-foreground);font-size:12px}
+.home-action-stat.warn strong{color:var(--fg-c-warning-ink)}
+.home-action-stat.bad strong{color:var(--fg-c-danger-ink)}
+.home-action-list{margin:0;padding:0;list-style:none;border-top:1px solid var(--border)}
+.home-action-list li{border-bottom:1px solid var(--border)}
+.home-action-list a{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 4px;color:var(--foreground);text-decoration:none}
+.home-action-list a:hover{background:var(--muted)}
+.home-action-copy strong{display:block;font-size:14px;font-weight:500}
+.home-action-copy small{display:block;margin-top:2px;color:var(--muted-foreground);font-size:12px}
+.home-action-tags{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex:0 0 auto}
+.home-actions-status,.home-actions-more{display:flex;align-items:center;gap:8px;margin:12px 0 0;color:var(--muted-foreground);font-size:13px}
+.guide-panel-copy{margin:12px 0 16px;color:var(--muted-foreground);font-size:14px;line-height:1.55}
+.server-page .page-intro{margin-bottom:16px}
+.help-index{margin:0;padding:8px 16px;list-style:none}
+.help-index li{padding:10px 0;border-bottom:1px solid var(--border)}
+.help-index li:last-child{border-bottom:0}
+.help-article{padding:24px 28px;max-width:860px}
+@media(max-width:900px){.home-actions-grid{grid-template-columns:1fr}.home-action-stats{grid-template-columns:1fr 1fr 1fr}}
+@media(max-width:520px){.home-action-stats{grid-template-columns:1fr}.home-action-list a{flex-direction:column;align-items:flex-start}}
+
+/* Hero banners: a plain card, not an inverse block, so every page has one surface colour. */
+.hero,.overview-hero{background:var(--card);color:var(--card-foreground);border:1px solid var(--border);box-shadow:0 1px 2px 0 rgb(0 0 0/.05);min-height:0}
+.hero:after{display:none}
+.hero .kicker,.hero-meta span{color:var(--muted-foreground)}
+.hero p:not(.kicker){color:var(--muted-foreground)}
+.hero h2{color:var(--foreground)}
+.hero-meta span{border-left-color:var(--border)}
+.hosted-automation-hero{background:var(--card);color:var(--card-foreground);border:1px solid var(--border)}
+.hosted-automation-hero :is(h2,.hosted-automation-lead,.hosted-automation-price){color:var(--foreground)}
+.hosted-automation-hero :is(p,.kicker,.hosted-automation-note),.hosted-automation-details small{color:var(--muted-foreground)}
+.hosted-automation-details{border-left-color:var(--border);border-top-color:var(--border)}
+.hosted-automation-hero .hosted-automation-primary{border-color:var(--primary);background:var(--primary);color:var(--primary-foreground);box-shadow:none}
+.hosted-automation-hero .hosted-automation-secondary{border-color:var(--border);background:var(--background);color:var(--foreground)}
+.hosted-automation-hero :is(.hosted-automation-primary,.hosted-automation-secondary):hover{background:var(--muted);color:var(--foreground)}
+.readiness-flow a>span,.preparation-progress span{background:var(--primary);color:var(--primary-foreground)}
 
 /* Top bar */
 .topbar{background:color-mix(in oklab,var(--background) 92%,transparent);border-bottom-color:var(--border);backdrop-filter:blur(8px)}
@@ -261,9 +337,8 @@ dialog::backdrop{background:rgb(0 0 0/.5)}
 // Basecoat components applied to FileGRC elements. The first entry whose selector matches
 // an element sets its Basecoat class and variant; later entries for the same class are skipped.
 export const THEME_CLASS_MAP = [
-  // On the dark promotion banner the main button is the light one, as in the original design.
-  { selector: ".button.hosted-automation-primary", className: "bc-btn", variant: "outline" },
-  { selector: ".button.hosted-automation-secondary", className: "bc-btn", variant: "ghost" },
+  { selector: ".button.hosted-automation-primary", className: "bc-btn", variant: "primary" },
+  { selector: ".button.hosted-automation-secondary", className: "bc-btn", variant: "outline" },
   { selector: ".button.primary", className: "bc-btn", variant: "primary" },
   { selector: ".button.danger-action", className: "bc-btn", variant: "destructive" },
   { selector: ".button.danger", className: "bc-btn", variant: "destructive" },

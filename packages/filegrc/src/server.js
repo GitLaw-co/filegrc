@@ -24,7 +24,7 @@ import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
 import { auditorLinkSecretFromEnv, createAuditorView } from "./auditor-view.js";
-import { actionDecisionsBranchFromEnv, actionFilters, answerRevision, canDecideAction, createActionRegister, filterActions } from "./action-register.js";
+import { actionDecisionsBranchFromEnv, actionFilters, answerRevision, canDecideAction, createActionRegister, filterActions, summarizeActions } from "./action-register.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -108,6 +108,7 @@ const STATE_PENDING = Symbol("pending state calculation");
 const AUDITOR_LINKS_PATH = "/auditor-links";
 const ACTIONS_PATH = "/actions";
 const SUGGESTIONS_PATH = "/api/suggestions";
+const ACTION_SUMMARY_PATH = "/api/actions/summary";
 const SUGGESTION_GUIDE_FILE = "suggest-a-change.md";
 // Shown in the "Suggest a change" dialog unless the workspace has faq/suggest-a-change.md.
 const DEFAULT_SUGGESTION_GUIDE = [
@@ -179,7 +180,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         : null;
       // Deciding on one's own action (or any action, for an admin) is the third.
       // Suggesting a change to a record is the fourth, open to everyone signed in.
-      const actionPersonId = hostedAuth && (url.pathname === ACTIONS_PATH || url.pathname === SUGGESTIONS_PATH)
+      const actionPersonId = hostedAuth && (url.pathname === ACTIONS_PATH || url.pathname === SUGGESTIONS_PATH || url.pathname === ACTION_SUMMARY_PATH)
         ? verifySession(sessionCookie(request), options.hostedAuth.sessionSecret)?.personId
         : null;
       if (hostedAuth && !((attestingPersonId || actionPersonId) && request.method === "POST") && !admin
@@ -234,6 +235,21 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
           const status = error.status ?? statusFor(error);
           return json(response, status, { error: publicErrorMessage(error, status) });
         }
+      }
+      if (request.method === "GET" && url.pathname === ACTION_SUMMARY_PATH) {
+        const view = await actionRegister.view();
+        const summary = view.exists ? summarizeActions(view.actions, { viewerPersonId: actionPersonId || null, today: new Date((options.now ?? Date.now)()).toISOString().slice(0, 10) }) : null;
+        const people = new Map((view.people ?? []).map((person) => [person.id, person.title]));
+        if (summary) for (const item of summary.items) item.ownerName = people.get(item.ownerId) || item.ownerId || null;
+        return json(response, 200, { exists: view.exists, summary });
+      }
+      // A browser opening /actions or /faq directly lands on the same page inside the app.
+      if (request.method === "GET" && isPageNavigation(request) && !url.searchParams.has("fragment")
+        && (url.pathname === ACTIONS_PATH || /^\/faq(?:\/[^/?#]*)?$/.test(url.pathname))) {
+        const query = new URLSearchParams(url.searchParams);
+        const target = url.pathname === ACTIONS_PATH ? "#/actions" : `#/help${url.pathname.slice(4)}`;
+        response.writeHead(302, { location: `/${target}${query.size ? `?${query}` : ""}${url.hash}`, "cache-control": "no-store" });
+        return response.end();
       }
       if (url.pathname === ACTIONS_PATH && ["GET", "POST"].includes(request.method)) {
         const viewer = actionPersonId ? await actionViewer(input, hostedAuth, request, actionPersonId) : null;
@@ -994,11 +1010,12 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       const helpRoute = /^\/faq(?:\/([^?#]*))?(?:[?#]|$)/.exec(request.url);
       if (request.method === "GET" && helpRoute) {
         const pages = await helpPages(helpRoot);
-        if (helpRoute[1] === undefined) return text(response, 200, renderHelpIndexPage(pages), "text/html; charset=utf-8");
+        const fragment = url.searchParams.has("fragment");
+        if (helpRoute[1] === undefined || helpRoute[1] === "") return text(response, 200, renderHelpIndexPage(pages, { fragment }), "text/html; charset=utf-8");
         const page = pages.find(({ slug }) => slug === helpRoute[1]);
         return page
-          ? text(response, 200, renderHelpPage(page), "text/html; charset=utf-8")
-          : text(response, 404, renderHelpMissingPage(), "text/html; charset=utf-8");
+          ? text(response, 200, renderHelpPage(page, { fragment }), "text/html; charset=utf-8")
+          : text(response, 404, renderHelpMissingPage({ fragment }), "text/html; charset=utf-8");
       }
       if (request.method === "GET" && !url.pathname.startsWith("/api/")) {
         const helpHref = (await helpPages(helpRoot)).length ? "/faq" : null;
@@ -1102,6 +1119,11 @@ async function actionViewer(input, hostedAuth, request, personId) {
   };
 }
 
+// A top-level browser navigation, as opposed to the app's own fetch of a page fragment.
+function isPageNavigation(request) {
+  return request.headers["sec-fetch-mode"] === "navigate" && request.headers["sec-fetch-dest"] !== "iframe";
+}
+
 async function actionRegisterExists(input) {
   try {
     return (await readdir(join(resolveWorkspaceRoot(input), "actions"))).some((name) => name.endsWith(".json") && name !== "schema.json");
@@ -1114,6 +1136,7 @@ async function actionRegisterExists(input) {
 // decide. A decision is saved away from the authoritative branch, then the page
 // shows it as pending until the register records it.
 async function actions(register, request, response, url, viewer) {
+  let fragment = url.searchParams.has("fragment");
   const page = async (status, extra = {}) => {
     const view = await register.view();
     const filters = actionFilters(extra.filterParams ?? url.searchParams, viewer?.personId);
@@ -1127,11 +1150,13 @@ async function actions(register, request, response, url, viewer) {
       filters,
       problems: view.problems,
       decided: extra.decided ?? (url.searchParams.get("decided") ? { actionId: url.searchParams.get("decided"), outcome: url.searchParams.get("outcome") } : null),
-      error: extra.error ?? null
+      error: extra.error ?? null,
+      fragment
     }), "text/html; charset=utf-8");
   };
   if (request.method === "GET") return page(200);
   const form = new URLSearchParams(await readForm(request));
+  fragment ||= form.has("fragment");
   const filterParams = new URLSearchParams();
   for (const key of ["q", "owner", "status", "priority", "blocks"]) {
     if (form.has(key)) filterParams.set(key, form.get(key));
@@ -1148,6 +1173,7 @@ async function actions(register, request, response, url, viewer) {
     })}`);
     filterParams.set("decided", result.decision.actionId);
     filterParams.set("outcome", result.decision.outcome);
+    if (fragment) filterParams.set("fragment", "1");
     response.writeHead(303, { location: `${ACTIONS_PATH}?${filterParams}#${encodeURIComponent(result.decision.actionId)}`, "cache-control": "no-store" });
     return response.end();
   } catch (error) {

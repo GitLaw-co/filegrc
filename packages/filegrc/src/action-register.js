@@ -148,6 +148,29 @@ function rank(value, order) {
   return index === -1 ? order.length : index;
 }
 
+// What the dashboard shows: the viewer's actions waiting for a decision (everyone's
+// when nobody is signed in), the counts behind them, and the first few to do.
+export function summarizeActions(actions, { viewerPersonId = null, today = new Date().toISOString().slice(0, 10), limit = 5 } = {}) {
+  const waiting = filterActions(actions, { status: "waiting" });
+  const mine = viewerPersonId ? waiting.filter((action) => action.ownerId === viewerPersonId) : waiting;
+  const overdue = (list) => list.filter((action) => /^\d{4}-\d{2}-\d{2}$/.test(String(action.due ?? "")) && action.due < today).length;
+  const blocking = (list) => list.filter((action) => action.blocksPeriodStart === true).length;
+  return {
+    scope: viewerPersonId ? "viewer" : "everyone",
+    counts: {
+      waiting: mine.length,
+      blocking: blocking(mine),
+      overdue: overdue(mine),
+      waitingEveryone: waiting.length,
+      blockingEveryone: blocking(waiting)
+    },
+    items: mine.slice(0, limit).map(({ id, title, ownerId, status, priority, due, blocksPeriodStart, kind }) => ({
+      id, title, ownerId, status, priority, due, kind, blocksPeriodStart: blocksPeriodStart === true,
+      overdue: /^\d{4}-\d{2}-\d{2}$/.test(String(due ?? "")) && due < today
+    }))
+  };
+}
+
 export function canDecideAction(action, viewer) {
   return Boolean(viewer?.personId) && DECIDABLE.has(action.status)
     && (viewer.isAdmin === true || action.ownerId === viewer.personId);
