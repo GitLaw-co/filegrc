@@ -17,6 +17,7 @@ const unitFiles = new Set([
   "recurrence.test.js",
   "resource-index.test.js",
   "source-coverage.test.js",
+  "theme.test.js",
   "time.test.js",
 ]);
 const tierArgument = argumentValue("--tier");

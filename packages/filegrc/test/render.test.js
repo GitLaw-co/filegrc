@@ -280,8 +280,8 @@ test("builds a self-contained read-only site", async (context) => {
   assert.deepEqual([...favicon.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
   const logoMark = await readFile(join(output, "logo-mark-white.png"));
   assert.deepEqual([...logoMark.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
-  await access(join(output, "filegrc-app.js"));
-  await access(join(output, "filegrc.css"));
+  assert.match(await readFile(join(output, "filegrc-app.js"), "utf8"), /new MutationObserver/);
+  assert.match(await readFile(join(output, "filegrc.css"), "utf8"), /^\/\* FileGRC theme: Basecoat 1\.1\.0/);
 });
 
 test("renders action and operating-window progress in the lifecycle summary", () => {
@@ -630,7 +630,10 @@ test("serves state and browser assets", async (context) => {
   assert.equal(appResponse.headers.get("x-frame-options"), "DENY");
   assert.equal(appResponse.headers.get("referrer-policy"), "no-referrer");
   assert.match(appResponse.headers.get("content-security-policy"), /frame-ancestors 'none'/);
-  assert.match(await appResponse.text(), /function renderHome/);
+  assert.match(await appResponse.text(), /function renderHome[\s\S]*new MutationObserver/);
+  const stylesResponse = await fetch(`${result.url}/filegrc.css`);
+  assert.equal(stylesResponse.status, 200);
+  assert.match(await stylesResponse.text(), /@layer filegrc\{[\s\S]*\.bc-btn/);
   const faviconResponse = await fetch(`${result.url}/favicon.png`);
   assert.equal(faviconResponse.status, 200);
   assert.equal(faviconResponse.headers.get("content-type"), "image/png");
