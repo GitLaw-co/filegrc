@@ -24,6 +24,7 @@ import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
 import { auditorLinkSecretFromEnv, createAuditorView } from "./auditor-view.js";
+import { actionDecisionsBranchFromEnv, actionFilters, canDecideAction, createActionRegister, filterActions } from "./action-register.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -91,7 +92,7 @@ import {
 } from "./workflow.js";
 import { scaffoldNonmaterialAmendment, saveNonmaterialAmendment } from "./nonmaterial-amendments.js";
 import { loadWorkspace } from "./workspace.js";
-import { APP_SCRIPT, APP_STYLES, renderAcknowledgementsPage, renderAuditorLinksPage, renderHelpIndexPage, renderHelpMissingPage, renderHelpPage, renderIndex } from "./web.js";
+import { APP_SCRIPT, APP_STYLES, renderAcknowledgementsPage, renderActionsPage, renderAuditorLinksPage, renderHelpIndexPage, renderHelpMissingPage, renderHelpPage, renderIndex } from "./web.js";
 import { assertWorkspaceEngineVersion } from "./runtime-version.js";
 
 const STATE_SESSION_MAX_AGE_MS = 5 * 60_000;
@@ -104,6 +105,16 @@ const STATE_CALCULATION_DEADLINE_MS = 120_000;
 const STATE_RESPONSE_WAIT_MS = 1_000;
 const STATE_PENDING = Symbol("pending state calculation");
 const AUDITOR_LINKS_PATH = "/auditor-links";
+const ACTIONS_PATH = "/actions";
+const SUGGESTIONS_PATH = "/api/suggestions";
+const SUGGESTION_GUIDE_FILE = "suggest-a-change.md";
+// Shown in the "Suggest a change" dialog unless the workspace has faq/suggest-a-change.md.
+const DEFAULT_SUGGESTION_GUIDE = [
+  "1. Your suggestion becomes an action in the action register.",
+  "2. The compliance agent checks it and proposes a change.",
+  "3. The record's owner approves the change on the Actions page.",
+  "4. The change is recorded with who approved it and when."
+].join("\n");
 
 export function createFilegrcServer(input = process.cwd(), options = {}) {
   assertWorkspaceEngineVersion(input, { allowModelDiagnostics: true });
@@ -118,6 +129,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
   const hostedAuth = options.hostedAuth ? createHostedAuth(input, options.hostedAuth) : null;
   const helpRoot = join(resolveWorkspaceRoot(input), "faq");
   const auditorView = createAuditorView(input, { secret: options.auditorSecret, now: options.now });
+  const actionRegister = createActionRegister(input, { decisionsBranch: options.actionDecisionsBranch, refreshMs: options.actionRefreshMs });
   // Locally, auditor links open on their own read-only listener, started with the
   // first link, so auditors never reach this editing server's routes. In hosted
   // mode the main server answers /auditor/ itself, behind the public URL.
@@ -164,7 +176,12 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         || (request.method === "POST" && url.pathname === "/api/auditor-links"))
         ? await hostedAuth.admin(request)
         : null;
-      if (hostedAuth && !(attestingPersonId && request.method === "POST") && !admin
+      // Deciding on one's own action (or any action, for an admin) is the third.
+      // Suggesting a change to a record is the fourth, open to everyone signed in.
+      const actionPersonId = hostedAuth && (url.pathname === ACTIONS_PATH || url.pathname === SUGGESTIONS_PATH)
+        ? verifySession(sessionCookie(request), options.hostedAuth.sessionSecret)?.personId
+        : null;
+      if (hostedAuth && !((attestingPersonId || actionPersonId) && request.method === "POST") && !admin
         && await hostedAuth.handle(request, response, url)) return;
       const requestOptions = {
         ...options,
@@ -196,6 +213,30 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
           return text(response, 403, renderAuditorLinksPage({ denied: true }), "text/html; charset=utf-8");
         }
         return text(response, 200, renderAuditorLinksPage({ admin }), "text/html; charset=utf-8");
+      }
+      if (request.method === "GET" && url.pathname === `${SUGGESTIONS_PATH}/guide`) {
+        const custom = (await helpPages(helpRoot)).find(({ slug }) => `${slug}.md` === SUGGESTION_GUIDE_FILE);
+        return json(response, 200, { html: renderMarkdown(custom?.source.replace(/^#[ \t]+.+\n*/m, "") ?? DEFAULT_SUGGESTION_GUIDE) });
+      }
+      if (request.method === "POST" && url.pathname === SUGGESTIONS_PATH) {
+        const viewer = actionPersonId ? await actionViewer(input, hostedAuth, request, actionPersonId) : null;
+        if (!viewer) return json(response, 403, { error: "Suggestions are sent from the hosted site. Change the record directly here." });
+        const payload = await readJson(request);
+        try {
+          const result = await actionRegister.suggest({ recordType: payload?.recordType, recordId: payload?.recordId, text: payload?.text, viewer });
+          console.log(`[filegrc audit] ${JSON.stringify({
+            event: "change-suggested", personId: viewer.personId, email: viewer.email, recordType: result.suggestion.recordType,
+            recordId: result.suggestion.recordId, suggestionId: result.suggestion.id, branch: result.branch, commit: result.commit
+          })}`);
+          return json(response, 201, { suggestion: result.suggestion });
+        } catch (error) {
+          const status = error.status ?? statusFor(error);
+          return json(response, status, { error: publicErrorMessage(error, status) });
+        }
+      }
+      if (url.pathname === ACTIONS_PATH && ["GET", "POST"].includes(request.method)) {
+        const viewer = actionPersonId ? await actionViewer(input, hostedAuth, request, actionPersonId) : null;
+        return await actions(actionRegister, request, response, url, viewer);
       }
       if (attestingPersonId && ["GET", "POST"].includes(request.method)) {
         return await acknowledgements(input, request, response, url, attestingPersonId, requestOptions);
@@ -960,7 +1001,8 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       }
       if (request.method === "GET" && !url.pathname.startsWith("/api/")) {
         const helpHref = (await helpPages(helpRoot)).length ? "/faq" : null;
-        return text(response, 200, renderIndex(null, { helpHref }), "text/html; charset=utf-8");
+        const actionsHref = (await actionRegisterExists(input)) ? ACTIONS_PATH : null;
+        return text(response, 200, renderIndex(null, { helpHref, actionsHref, suggestHref: hostedAuth ? SUGGESTIONS_PATH : null }), "text/html; charset=utf-8");
       }
       json(response, 404, { error: "Not found." });
     } catch (error) {
@@ -1012,6 +1054,72 @@ async function acknowledgements(input, request, response, url, personId, request
     if (asJson) throw error;
     const status = statusFor(error);
     return page(status, { error: publicErrorMessage(error, status) });
+  }
+}
+
+// The signed-in Person, with the email decisions are recorded under.
+async function actionViewer(input, hostedAuth, request, personId) {
+  const person = (await loadWorkspace(input)).resources.find((record) => (
+    record.type === "person" && record.id === personId && record.status === "active"
+  ));
+  if (!person) return null;
+  return {
+    personId,
+    name: person.title,
+    email: String(person.email ?? "").trim().toLowerCase(),
+    isAdmin: Boolean(await hostedAuth.admin(request))
+  };
+}
+
+async function actionRegisterExists(input) {
+  try {
+    return (await readdir(join(resolveWorkspaceRoot(input), "actions"))).some((name) => name.endsWith(".json") && name !== "schema.json");
+  } catch {
+    return false;
+  }
+}
+
+// Everyone signed in can read the register; only the owner or an admin can
+// decide. A decision is saved away from the authoritative branch, then the page
+// shows it as pending until the register records it.
+async function actions(register, request, response, url, viewer) {
+  const page = async (status, extra = {}) => {
+    const view = await register.view();
+    const filters = actionFilters(extra.filterParams ?? url.searchParams, viewer?.personId);
+    const shown = filterActions(view.actions, filters);
+    return text(response, status, renderActionsPage({
+      viewer,
+      exists: view.exists,
+      people: view.people ?? [],
+      allActions: view.actions,
+      actions: shown.map((action) => ({ ...action, canDecide: canDecideAction(action, viewer) })),
+      filters,
+      problems: view.problems,
+      decided: extra.decided ?? (url.searchParams.get("decided") ? { actionId: url.searchParams.get("decided"), outcome: url.searchParams.get("outcome") } : null),
+      error: extra.error ?? null
+    }), "text/html; charset=utf-8");
+  };
+  if (request.method === "GET") return page(200);
+  const form = new URLSearchParams(await readForm(request));
+  const filterParams = new URLSearchParams();
+  for (const key of ["q", "owner", "status", "priority", "blocks"]) {
+    if (form.has(key)) filterParams.set(key, form.get(key));
+  }
+  if (!viewer) return page(403, { filterParams, error: "Sign in on the hosted site to decide on an action." });
+  try {
+    const outcome = { approve: "approved", feedback: "feedback", reject: "rejected" }[form.get("decision")];
+    const result = await register.decide({ actionId: form.get("actionId"), outcome, note: form.get("note"), viewer });
+    console.log(`[filegrc audit] ${JSON.stringify({
+      event: "action-decision", personId: viewer.personId, email: viewer.email, actionId: result.decision.actionId,
+      outcome: result.decision.outcome, decisionId: result.decision.id, branch: result.branch, commit: result.commit
+    })}`);
+    filterParams.set("decided", result.decision.actionId);
+    filterParams.set("outcome", result.decision.outcome);
+    response.writeHead(303, { location: `${ACTIONS_PATH}?${filterParams}#${encodeURIComponent(result.decision.actionId)}`, "cache-control": "no-store" });
+    return response.end();
+  } catch (error) {
+    const status = error.status ?? statusFor(error);
+    return page(status, { filterParams, error: publicErrorMessage(error, status) });
   }
 }
 
@@ -1118,6 +1226,7 @@ export async function serveWorkspace(input = process.cwd(), options = {}) {
     hostedAuth,
     auditorHost: host,
     auditorSecret,
+    actionDecisionsBranch: options.actionDecisionsBranch ?? actionDecisionsBranchFromEnv(options.env ?? process.env),
     allowNonAuthoritativeWrites: options.allowNonAuthoritativeWrites === true,
     backgroundPushDelayMs: options.backgroundPushDelayMs,
     stateSectionDeadlineMs: options.stateSectionDeadlineMs,

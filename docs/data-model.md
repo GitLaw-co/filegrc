@@ -2984,6 +2984,8 @@ Record Markdown: available when needed as an implicit companion file.
 | `organizationName` | string | Yes | Organization |
 | `timezone` | string (timezone) | Yes | Timezone |
 | `description` | string | No | Description |
+| `brandName` | string | No | Sidebar name |
+| `brandSubtitle` | string | No | Sidebar subtitle |
 
 #### `renderer-settings`
 

@@ -7,3 +7,4 @@
 - 2026-10-31 Nick: Yes, as recommended - the card is the spec. Collector interface + GitHub first, token from an env var, tests on fixtures; GCP and Workspace as follow-up items.
 - 2026-11-01 Nick: Yes - build it as described. Laptop checks come from Google Endpoint Verification through the Workspace collector.
 - 2026-11-01 Nick: Yes - build it as written. Read-only Markdown help pages from faq/ at /faq behind the existing sign-in.
+- 2026-11-03 Nick: Yes - hosted Actions page with Approve, Feedback and Reject; decisions and change suggestions go to a separate branch, never main. Also: Suggest a change on record and list pages, one-line list filter toolbar, configurable sidebar brand.
