@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { contentRevision, createResource } from "./files.js";
+import { contentRevision, createResource, prepareNewResource } from "./files.js";
 import { createResourceId } from "./id.js";
 import { resolveDataPath } from "./paths.js";
 import { assessProgramReadiness } from "./program-readiness.js";
@@ -56,11 +56,26 @@ export async function listOwedAttestations(input, personId, options = {}) {
 // payload chooses one owed subject; creation binds its current content.
 export async function completeOwnAttestation(input, personId, payload = {}) {
   const loaded = await loadWorkspace(input);
+  return createResource(loaded.root, ownAttestationRecord(loaded, personId, payload, await owedFor(loaded, personId, payload)), { content: payload.content });
+}
+
+// The completed Attestation the signed-in person would create, bound to the
+// current content revision, and its path, without writing it.
+export async function prepareOwnAttestation(input, personId, payload = {}) {
+  const loaded = await loadWorkspace(input);
+  return prepareNewResource(loaded, ownAttestationRecord(loaded, personId, payload, await owedFor(loaded, personId, payload)));
+}
+
+async function owedFor(loaded, personId, payload) {
   const subjectIds = payload.record?.subjectResourceIds;
   const owed = Array.isArray(subjectIds) && subjectIds.length === 1
     ? (await listOwedAttestations(loaded, personId)).find(({ subjectId }) => subjectId === subjectIds[0])
     : null;
   if (!owed) throw new Error("The subject must be one Policy, Document, or Training you owe an acknowledgement for now.");
+  return owed;
+}
+
+function ownAttestationRecord(loaded, personId, payload, owed) {
   const completedOn = currentCalendarDate(loaded.workspace?.timezone || "UTC");
   const record = {
     id: createResourceId("attestation", `${personId} ${owed.subjectId} ${completedOn}`, loaded.resources.map(({ id }) => id)),
@@ -75,7 +90,7 @@ export async function completeOwnAttestation(input, personId, payload = {}) {
     completedOn,
     attestationMethod: "git-approval"
   };
-  return createResource(loaded.root, record, { content: payload.content });
+  return record;
 }
 
 export async function readResourceContent(loaded, record) {

@@ -2,7 +2,7 @@ import { evidenceObservationMatches } from "./evidence-observation.js";
 import { workflowProofIds } from "./workflow-proof.js";
 import { randomUUID } from "node:crypto";
 import { constants, link, lstat, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { getResourceDefinition, loadModel, modelSupports } from "../model/index.js";
 import { openPlaceholderCount } from "./content-readiness.js";
 import { serializeWorkspaceMutation, workspaceValidationDeferred } from "./mutation.js";
@@ -1163,6 +1163,14 @@ function assertRevision(source, expected, label) {
 
 export function contentRevision(source) {
   return calculateRevision("content", source);
+}
+
+// The record exactly as createResource would write it, and its workspace-relative
+// path, without writing anything. A caller that saves it elsewhere (such as a
+// hosted server that cannot push the authoritative branch) uses this.
+export async function prepareNewResource(loaded, record) {
+  const path = resourcePath(loaded.root, loaded.model, record);
+  return { record: await prepareApprovalBinding(loaded, record, []), path: relative(loaded.root, path).split(sep).join("/") };
 }
 
 async function prepareApprovalBinding(loaded, record, contentWrites, previousRecord = null) {
