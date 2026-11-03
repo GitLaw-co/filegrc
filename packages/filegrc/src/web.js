@@ -178,6 +178,151 @@ export function renderHelpMissingPage() {
   return helpDocument("Help page not found", `<h2>Help page not found</h2><p><a href="/faq">See all help pages</a></p>`);
 }
 
+const ACTION_STATUS_LABELS = {
+  open: "Open",
+  proposed: "Answer proposed",
+  accepted: "Accepted",
+  rejected: "Rejected",
+  done: "Done",
+  dropped: "Dropped"
+};
+const ACTION_OUTCOME_LABELS = { approved: "Approved", feedback: "Feedback", rejected: "Rejected" };
+
+// Hosted mode's action register page. Filters are a plain GET form and each
+// decision is a plain POST form, so the page works without JavaScript.
+export function renderActionsPage({ viewer = null, exists = true, people = [], allActions = [], actions = [], filters = {}, problems = [], decided = null, error = null }) {
+  const personName = (id) => people.find((person) => person.id === id)?.title || id || "Nobody";
+  const ownerIds = [...new Set(allActions.map(({ ownerId }) => ownerId).filter(Boolean))]
+    .sort((a, b) => personName(a).localeCompare(personName(b)));
+  const keys = ["q", "owner", "status", "priority", "blocks"];
+  const hidden = keys.map((key) => `<input type="hidden" name="${key}" value="${escapeHtml(filters[key] ?? "")}">`).join("");
+  const href = (changes) => {
+    const next = new URLSearchParams();
+    for (const key of keys) next.set(key, changes[key] ?? filters[key] ?? "");
+    return `/actions?${escapeHtml(next.toString())}`;
+  };
+  const statusLabel = (value) => value === "waiting" ? "Waiting for a decision" : value === "all" ? "Any" : ACTION_STATUS_LABELS[value] || value;
+  const menus = [
+    { key: "owner", label: "Owner", options: [["", "Any"], ...ownerIds.map((id) => [id, personName(id)])], name: personName },
+    { key: "status", label: "Status", options: [["all", "Any"], ["waiting", "Waiting for a decision"], ...Object.entries(ACTION_STATUS_LABELS)], name: statusLabel, inactive: "all" },
+    { key: "priority", label: "Priority", options: [["", "Any"], ...["p1", "p2", "p3"].map((value) => [value, value.toUpperCase()])], name: (value) => value.toUpperCase() },
+    { key: "blocks", label: "Blocks period start", options: [["", "Any"], ["yes", "Yes"]], name: () => "Yes" }
+  ];
+  const menu = ({ key, label, options, inactive = "" }) => `<details class="filter-menu${(filters[key] ?? "") !== inactive ? " active" : ""}"><summary aria-label="Filter by ${escapeHtml(label.toLowerCase())}">${escapeHtml(label)}<span class="filter-caret" aria-hidden="true">▾</span></summary>
+      <div class="filter-options" role="group" aria-label="${escapeHtml(label)}">${options.map(([value, text]) => `<a href="${href({ [key]: value })}"${(filters[key] ?? "") === value ? ' aria-current="true"' : ""}>${escapeHtml(text)}</a>`).join("")}</div></details>`;
+  const chips = [
+    ...(filters.q ? [`<a class="filter-chip" href="${href({ q: "" })}" aria-label="Remove search ${escapeHtml(filters.q)}">Search: ${escapeHtml(filters.q)} <span aria-hidden="true">×</span></a>`] : []),
+    ...menus.filter(({ key, inactive = "" }) => (filters[key] ?? "") !== inactive).map(({ key, label, name, inactive = "" }) => (
+      `<a class="filter-chip" href="${href({ [key]: inactive })}" aria-label="Remove filter ${escapeHtml(label)}: ${escapeHtml(name(filters[key]))}">${escapeHtml(label)}: ${escapeHtml(name(filters[key]))} <span aria-hidden="true">×</span></a>`))
+  ];
+  const filterForm = `<div class="filter-bar"><form class="filter-toolbar" role="search" aria-label="Filter actions" method="get" action="/actions">
+    <label class="filter-search"><span class="sr-only">Search actions</span><input type="search" name="q" placeholder="Search actions" value="${escapeHtml(filters.q ?? "")}"></label>
+    ${keys.filter((key) => key !== "q").map((key) => `<input type="hidden" name="${key}" value="${escapeHtml(filters[key] ?? "")}">`).join("")}
+    <div class="filter-buttons">${menus.map(menu).join("")}</div>
+    <span class="filter-count">${actions.length} of ${allActions.length} actions</span>
+  </form>
+  ${chips.length ? `<div class="filter-chips">${chips.join("")}<a class="filter-clear" href="/actions?owner=&amp;status=all">Clear all</a></div>` : ""}</div>`;
+  const decidedNotice = decided?.actionId
+    ? `<p class="panel" role="status">${escapeHtml({ approved: "Approved", feedback: "Feedback sent for", rejected: "Rejected" }[decided.outcome] || "Saved")} ${escapeHtml(decided.actionId)}. Your decision is saved and shows below as waiting to be filed. The register itself is updated at the next review.</p>`
+    : "";
+  const cards = actions.map((action) => actionCard(action, { personName, hidden, viewer })).join("\n");
+  const intro = viewer
+    ? `Questions that need a person's answer. You can decide on actions you own${viewer.isAdmin ? ", and on any action as an admin" : ""}.`
+    : "Questions that need a person's answer. Sign in on the hosted site to decide on one.";
+  const body = !exists
+    ? `<p class="empty">This program has no action register. Add files to the actions/ folder to start one.</p>`
+    : `${filterForm}
+    ${cards || `<p class="empty">No actions match these filters. <a href="/actions?owner=&amp;status=all">Show all actions</a></p>`}`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Actions · FileGRC</title>
+  <link rel="stylesheet" href="/filegrc.css">
+</head>
+<body class="standalone-page">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <main id="main" class="page action-page">
+    <div class="page-intro"><div>
+      <p class="kicker">${escapeHtml(viewer?.name || viewer?.email || "Action register")}</p>
+      <h1 class="action-heading">Actions</h1>
+      <p>${escapeHtml(intro)}</p>
+    </div></div>
+    ${error ? `<p class="panel dialog-error" role="alert">${escapeHtml(error)}</p>` : ""}
+    ${problems.map((problem) => `<p class="panel dialog-error" role="alert">${escapeHtml(problem)}</p>`).join("")}
+    ${decidedNotice}
+    ${body}
+    <p><a href="/">Open the program</a>${viewer ? ` · <a href="/auth/logout">Sign out</a>` : ""}</p>
+  </main>
+</body>
+</html>`;
+}
+
+function actionCard(action, { personName, hidden, viewer }) {
+  const id = escapeHtml(action.id);
+  const kicker = [action.id, action.priority ? String(action.priority).toUpperCase() : null, action.blocksPeriodStart === true ? "Blocks the period start" : null]
+    .filter(Boolean).map(escapeHtml).join(" · ");
+  const fact = (label, value) => value === undefined || value === null || value === "" ? "" : `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`;
+  const section = (label, html) => html ? `<h3>${label}</h3>${html}` : "";
+  const evidence = Array.isArray(action.evidence) && action.evidence.length
+    ? `<ul class="action-links">${action.evidence.map(linkItem).join("")}</ul>` : "";
+  const links = Array.isArray(action.links) && action.links.length
+    ? `<ul class="action-links">${action.links.map(linkItem).join("")}</ul>`
+    : action.links && typeof action.links === "object" && !Array.isArray(action.links)
+      ? `<ul class="action-links">${Object.entries(action.links).map(([label, value]) => linkItem(typeof value === "string" ? { label, url: value } : { label, ...value })).join("")}</ul>`
+      : "";
+  const pending = (action.pendingDecisions ?? []).map((decision) => `<li><strong>${escapeHtml(ACTION_OUTCOME_LABELS[decision.outcome] || decision.outcome)}</strong> by ${escapeHtml(personName(decision.by))} on ${escapeHtml(formatUtc(decision.on))}${decision.note ? `: ${escapeHtml(decision.note)}` : ""}</li>`).join("");
+  const form = (decision, button, field) => `<form method="post" action="/actions">
+        <input type="hidden" name="actionId" value="${id}"><input type="hidden" name="decision" value="${decision}">${hidden}
+        ${field ? `<label for="${id}-${decision}-note">${field}</label><textarea id="${id}-${decision}-note" name="note" rows="3" maxlength="4000" required></textarea>` : ""}
+        <button class="button${decision === "approve" ? " primary" : ""}" type="submit">${button}</button>
+      </form>`;
+  const decide = action.canDecide
+    ? `<div class="action-decide">
+      ${action.suggestedAnswer ? form("approve", "Approve", null) : ""}
+      <details><summary>Feedback</summary>${form("feedback", "Send feedback", "What should change? The agent reads this and comes back with a new answer.")}</details>
+      <details><summary>Reject</summary>${form("reject", "Reject", "Why are you rejecting it?")}</details>
+    </div>`
+    : viewer && ["open", "proposed"].includes(action.status)
+      ? `<p class="action-note">Only ${escapeHtml(personName(action.ownerId))} or an admin can decide on this action.</p>`
+      : "";
+  return `<article class="panel action-card" id="${id}" aria-labelledby="${id}-title">
+    <p class="kicker">${kicker}</p>
+    <h2 id="${id}-title">${escapeHtml(action.title || action.id)}</h2>
+    <dl class="action-facts">
+      ${fact("Owner", personName(action.ownerId))}
+      ${fact("Status", ACTION_STATUS_LABELS[action.status] || action.status)}
+      ${fact("Due", action.due)}
+      ${fact("Confidence", action.confidence)}
+      ${fact("Kind", action.kind)}
+    </dl>
+    ${section("Question", action.question ? `<div class="markdown">${renderMarkdown(String(action.question))}</div>` : "")}
+    ${section("Suggested answer", action.suggestedAnswer ? `<div class="markdown">${renderMarkdown(String(action.suggestedAnswer))}</div>` : "")}
+    ${section("Evidence", evidence)}
+    ${section("Links", links)}
+    ${action.decision && !(action.pendingDecisions ?? []).length ? `<p class="action-note">${escapeHtml(ACTION_OUTCOME_LABELS[action.decision.outcome] || action.decision.outcome || "Decided")} by ${escapeHtml(personName(action.decision.by))}${action.decision.on ? ` on ${escapeHtml(formatUtc(action.decision.on))}` : ""}${action.decision.note ? `: ${escapeHtml(action.decision.note)}` : ""}</p>` : ""}
+    ${pending ? `<div class="action-pending" role="note"><p><strong>Waiting to be filed in the register</strong></p><ul>${pending}</ul></div>` : ""}
+    ${decide}
+  </article>`;
+}
+
+// An evidence or link entry: `{ label, url }` opens when the URL is https,
+// `{ label, path }` names a file in the program repository. Anything else is text.
+function linkItem(entry) {
+  const value = typeof entry === "string" ? { url: entry } : entry && typeof entry === "object" ? entry : { label: String(entry) };
+  const url = String(value.url ?? value.href ?? "");
+  const label = String(value.label ?? value.title ?? (url || value.path || value.id || ""));
+  if (/^https:\/\//i.test(url)) return `<li><a href="${escapeHtml(url)}" rel="noopener noreferrer" target="_blank">${escapeHtml(label)}</a></li>`;
+  const path = value.path ?? value.id;
+  return `<li>${escapeHtml(label)}${path && path !== label ? ` <code>${escapeHtml(path)}</code>` : ""}</li>`;
+}
+
+function formatUtc(value) {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(String(value ?? ""));
+  return match ? `${match[1]} ${match[2]} UTC` : String(value ?? "");
+}
+
 function helpDocument(title, body) {
   return `<!doctype html>
 <html lang="en">
@@ -196,7 +341,7 @@ function helpDocument(title, body) {
 </html>`;
 }
 
-export function renderIndex(state = null, { helpHref = null } = {}) {
+export function renderIndex(state = null, { helpHref = null, actionsHref = null, suggestHref = null } = {}) {
   const snapshot = state
     ? `<script id="filegrc-data" type="application/json">${safeJson(state)}</script>`
     : "";
@@ -210,7 +355,7 @@ export function renderIndex(state = null, { helpHref = null } = {}) {
   <link rel="icon" type="image/png" href="./favicon.png">
   <link rel="stylesheet" href="./filegrc.css">
 </head>
-<body${helpHref ? ` data-help-href="${escapeHtml(helpHref)}"` : ""}>
+<body${helpHref ? ` data-help-href="${escapeHtml(helpHref)}"` : ""}${actionsHref ? ` data-actions-href="${escapeHtml(actionsHref)}"` : ""}${suggestHref ? ` data-suggest-href="${escapeHtml(suggestHref)}"` : ""}>
   <a class="skip-link" href="#main">Skip to content</a>
   <div id="app"><div class="loading" role="status" aria-live="polite" aria-busy="true"><span class="spinner" aria-hidden="true"></span><span>Loading workspace…</span></div></div>
   ${snapshot}
@@ -532,7 +677,7 @@ function buildNavigation(route) {
   const organizationCurrent = route.name === "organization" || route.name === "repository" || ["workspace", "renderer-settings"].includes(route.type);
   const organizationName = state.workspace.organizationName || "Organization";
   const initial = organizationName.trim().charAt(0).toUpperCase() || "O";
-  return '<aside class="sidebar" id="sidebar-navigation"><button class="nav-close" type="button" aria-label="Close navigation">×</button><a href="#/" class="brand"' + (route.name === "home" ? ' aria-current="page"' : "") + '><img class="mark" src="./logo-mark-white.png" alt="" width="39" height="39"><span><strong>FileGRC</strong><small>SOC 2 workspace</small></span></a><label class="search mobile-sidebar-search"><span aria-hidden="true">⌕</span><input data-global-search type="search" placeholder="Search records" aria-label="Search records"></label><nav class="sidebar-nav">' + stages + '</nav><div class="automation-nav-panel"><p>' + esc(HOSTED_AUTOMATION.compactMessage) + '</p><a class="hosted-automation-nav" href="' + esc(hostedNavigation()) + '" target="_blank" rel="noopener noreferrer">Autopilot <span aria-hidden="true">↗</span></a></div><div class="sidebar-footer">' + helpNavigation() + '<a class="organization-nav ' + (organizationCurrent ? "current" : "") + '" href="#/organization"><span class="organization-mark">' + esc(initial) + '</span><span><strong>' + esc(organizationName) + '</strong><small>Organization</small></span><span class="organization-arrow">›</span></a></div></aside><button class="nav-scrim" type="button" aria-label="Close navigation"></button>';
+  return '<aside class="sidebar" id="sidebar-navigation"><button class="nav-close" type="button" aria-label="Close navigation">×</button><a href="#/" class="brand"' + (route.name === "home" ? ' aria-current="page"' : "") + '><img class="mark" src="./logo-mark-white.png" alt="" width="39" height="39"><span><strong>' + esc(state.workspace.brandName || "FileGRC") + '</strong><small>' + esc(state.workspace.brandSubtitle || "SOC 2 workspace") + '</small></span></a><label class="search mobile-sidebar-search"><span aria-hidden="true">⌕</span><input data-global-search type="search" placeholder="Search records" aria-label="Search records"></label><nav class="sidebar-nav">' + stages + '</nav><div class="automation-nav-panel"><p>' + esc(HOSTED_AUTOMATION.compactMessage) + '</p><a class="hosted-automation-nav" href="' + esc(hostedNavigation()) + '" target="_blank" rel="noopener noreferrer">Autopilot <span aria-hidden="true">↗</span></a></div><div class="sidebar-footer">' + helpNavigation() + '<a class="organization-nav ' + (organizationCurrent ? "current" : "") + '" href="#/organization"><span class="organization-mark">' + esc(initial) + '</span><span><strong>' + esc(organizationName) + '</strong><small>Organization</small></span><span class="organization-arrow">›</span></a></div></aside><button class="nav-scrim" type="button" aria-label="Close navigation"></button>';
 }
 
 function readinessStageForRoute(route) {
@@ -1503,10 +1648,13 @@ function collectionReviewVisible(type) {
   return type !== "control";
 }
 
-// The server sets data-help-href only when the workspace has help pages in faq/.
+// The server sets data-help-href only when the workspace has help pages in faq/,
+// and data-actions-href only when it has an action register in actions/.
 function helpNavigation() {
-  const href = document.body.dataset.helpHref;
-  return href ? '<a class="help-nav" href="' + esc(href) + '">Help</a>' : "";
+  const actions = document.body.dataset.actionsHref;
+  const help = document.body.dataset.helpHref;
+  return (actions ? '<a class="help-nav" href="' + esc(actions) + '">Actions</a>' : "")
+    + (help ? '<a class="help-nav" href="' + esc(help) + '">Help</a>' : "");
 }
 
 function hostedNavigation() {
@@ -3710,13 +3858,19 @@ function renderList(main, type, params = new URLSearchParams()) {
     ? '<button class="button" id="review-applicability">' + (hasStaleApplicability ? 'Reconfirm applicability' : 'Review applicability') + '</button>'
     : "";
   const guideTrigger = '<button class="guide-trigger" id="resource-guide-trigger" type="button" aria-label="About ' + esc(definition.pluralTitle) + '" aria-haspopup="dialog" aria-controls="resource-guide" aria-expanded="false"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8"></circle><path d="M7.8 7.5a2.4 2.4 0 1 1 3.25 2.25c-.7.31-1.05.72-1.05 1.5v.25M10 14.5v.1"></path></svg></button>';
-  const listTools = '<div class="list-tools list-header-tools"><label><span class="sr-only">Filter list</span><input id="list-search" type="search" placeholder="Filter ' + esc(definition.pluralTitle.toLowerCase()) + '"></label>' +
-    filters.map(({ name, label, values }) => '<select class="field-filter" data-field="' + esc(name) + '" aria-label="Filter by ' + esc(label.toLowerCase()) + '"><option value="">Any ' + esc(properCase(label)) + '</option>' + values.map((value) => '<option value="' + esc(value) + '">' + esc(filterOptionLabel(value)) + '</option>').join("") + '</select>').join("") + '<span id="result-count" aria-live="polite">' + entries.length + ' records</span>' + applicabilityButton + createButton + '</div>';
+  const headerActions = suggestChangeButton() + applicabilityButton + createButton;
+  const listTools = headerActions ? '<div class="list-tools list-header-tools">' + headerActions + '</div>' : "";
+  const filterBar = filterToolbar({
+    searchLabel: "Filter " + definition.pluralTitle.toLowerCase(),
+    searchPlaceholder: "Search " + definition.pluralTitle.toLowerCase(),
+    filters,
+    count: entries.length + (entries.length === 1 ? " record" : " records")
+  });
   const relatedGuidance = type === "document" && documentScope === "audit"
     ? listStage?.sections.flatMap((section) => section.relatedLinks || []).find((link) => link.type === "document" && link.instructions)
     : null;
   const pageSummary = relatedGuidance?.summary || STAGE_PAGE_SUMMARIES[type] || definition.description;
-  main.innerHTML = '<div class="page"><div class="page-intro"><div><p class="kicker">' + esc(listStage?.title || groupTitle(definition.group)) + '</p><div class="page-title-line"><h2>' + esc(titleCase(listTitle)) + '</h2>' + guideTrigger + '</div><p>' + esc(pageSummary) + '</p></div>' + listTools + '</div>' + resourceGuide(type, relatedGuidance) +
+  main.innerHTML = '<div class="page"><div class="page-intro"><div><p class="kicker">' + esc(listStage?.title || groupTitle(definition.group)) + '</p><div class="page-title-line"><h2>' + esc(titleCase(listTitle)) + '</h2>' + guideTrigger + '</div><p>' + esc(pageSummary) + '</p></div>' + listTools + '</div>' + filterBar + resourceGuide(type, relatedGuidance) +
     collectionReviewPanel(type) +
     (type === "control" ? workflowGuidance({ type, title: "Next steps" }) : "") +
     '<section class="record-table-wrap"><table class="record-table"><thead><tr><th>' + esc(fieldLabel(type, "title")) + '</th>' + fields.map((name) => '<th>' + esc(fieldLabel(type, name)) + '</th>').join("") + '<th>Next action</th><th>Git file</th></tr></thead><tbody id="record-rows"></tbody></table></section>' +
@@ -3745,6 +3899,7 @@ function renderList(main, type, params = new URLSearchParams()) {
   };
   main.querySelector("#list-search").value = params.get("q") || "";
   main.querySelectorAll(".field-filter").forEach((select) => { select.value = params.get(select.dataset.field) || ""; });
+  setupFilterToolbar(main.querySelector(".filter-bar")).sync();
   const syncRoute = (mode = "replace") => {
     const next = new URLSearchParams();
     if (params.get("stage")) next.set("stage", params.get("stage"));
@@ -3777,6 +3932,7 @@ function renderList(main, type, params = new URLSearchParams()) {
   renderRows();
   syncRoute();
   main.querySelector("#new-resource")?.addEventListener("click", () => openEditor(type));
+  main.querySelector("[data-suggest-change]")?.addEventListener("click", () => openSuggestChangeDialog(type));
   main.querySelector("#record-rows").addEventListener("click", (event) => {
     if (event.target.closest("[data-load-workflow]")) loadStateSection("workflow");
   });
@@ -3809,6 +3965,156 @@ function renderList(main, type, params = new URLSearchParams()) {
   if (params.get("review-collection") === "1" && !state.readOnly) {
     queueMicrotask(() => main.querySelector("[data-review-collection]")?.click());
   }
+}
+
+// One toolbar line for list pages: search, a compact menu per filter, the
+// record count, and the active filters as removable chips underneath. Each
+// filter keeps its value in a hidden .field-filter input that fires "change".
+function filterToolbar({ searchLabel, searchPlaceholder, query = "", filters = [], count = "" }) {
+  return '<div class="filter-bar"><div class="filter-toolbar" role="search" aria-label="' + esc(searchLabel) + '">' +
+    '<label class="filter-search"><span class="sr-only">' + esc(searchLabel) + '</span><input id="list-search" type="search" placeholder="' + esc(searchPlaceholder) + '" value="' + esc(query) + '"></label>' +
+    '<div class="filter-buttons">' + filters.map(({ name, label, values }) => '<details class="filter-menu" data-field="' + esc(name) + '"><summary aria-label="Filter by ' + esc(label.toLowerCase()) + '">' + esc(properCase(label)) + '<span class="filter-caret" aria-hidden="true">▾</span></summary>' +
+      '<div class="filter-options" role="group" aria-label="' + esc(properCase(label)) + '"><button type="button" data-value="" aria-pressed="false">Any</button>' +
+      values.map((value) => '<button type="button" data-value="' + esc(value) + '" aria-pressed="false">' + esc(filterOptionLabel(value)) + '</button>').join("") +
+      '</div><input type="hidden" class="field-filter" data-field="' + esc(name) + '" data-label="' + esc(properCase(label)) + '" value=""></details>').join("") + '</div>' +
+    '<span id="result-count" class="filter-count" aria-live="polite">' + esc(count) + '</span></div>' +
+    '<div class="filter-chips" hidden></div></div>';
+}
+
+function setupFilterToolbar(container) {
+  const menus = [...container.querySelectorAll(".filter-menu")];
+  const chips = container.querySelector(".filter-chips");
+  const optionLabel = (menu, value) => [...menu.querySelectorAll("[data-value]")].find((button) => button.dataset.value === value)?.textContent || value;
+  const sync = () => {
+    const active = [];
+    for (const menu of menus) {
+      const input = menu.querySelector(".field-filter");
+      menu.classList.toggle("active", Boolean(input.value));
+      menu.querySelectorAll("[data-value]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.value === input.value)));
+      if (input.value) active.push('<button type="button" class="filter-chip" data-clear="' + esc(input.dataset.field) + '" aria-label="Remove filter ' + esc(input.dataset.label + ": " + optionLabel(menu, input.value)) + '">' + esc(input.dataset.label) + ': ' + esc(optionLabel(menu, input.value)) + ' <span aria-hidden="true">×</span></button>');
+    }
+    chips.innerHTML = active.join("") + (active.length ? '<button type="button" class="filter-clear" data-clear-all>Clear all</button>' : "");
+    chips.hidden = !active.length;
+  };
+  const set = (menu, value) => {
+    const input = menu.querySelector(".field-filter");
+    if (input.value === value) return;
+    input.value = value;
+    sync();
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  for (const menu of menus) {
+    menu.addEventListener("toggle", () => {
+      if (!menu.open) return;
+      menus.forEach((other) => { if (other !== menu) other.open = false; });
+      (menu.querySelector('[aria-pressed="true"]') || menu.querySelector("[data-value]"))?.focus();
+    });
+    menu.querySelector(".filter-options").addEventListener("click", (event) => {
+      const option = event.target.closest("[data-value]");
+      if (!option) return;
+      set(menu, option.dataset.value);
+      menu.open = false;
+      menu.querySelector("summary").focus();
+    });
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && menu.open) {
+        event.preventDefault();
+        menu.open = false;
+        menu.querySelector("summary").focus();
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) || !menu.open) return;
+      const options = [...menu.querySelectorAll("[data-value]")];
+      const index = options.indexOf(document.activeElement);
+      const target = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
+        : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+      event.preventDefault();
+      options[target]?.focus();
+    });
+  }
+  container.addEventListener("click", (event) => {
+    const clear = event.target.closest("[data-clear]");
+    if (clear) {
+      set(menus.find((menu) => menu.dataset.field === clear.dataset.clear), "");
+      (chips.querySelector("[data-clear]") || container.querySelector("#list-search"))?.focus();
+    }
+    if (event.target.closest("[data-clear-all]")) {
+      for (const menu of menus) set(menu, "");
+      container.querySelector("#list-search")?.focus();
+    }
+  });
+  return { sync };
+}
+
+// An open filter menu closes when the pointer goes down anywhere outside it.
+document.addEventListener("pointerdown", (event) => {
+  document.querySelectorAll(".filter-menu[open]").forEach((menu) => { if (!menu.contains(event.target)) menu.open = false; });
+});
+
+// The server sets data-suggest-href only in hosted mode, where people read the
+// program but change it through review.
+function suggestChangeButton() {
+  return document.body.dataset.suggestHref ? '<button class="button" type="button" data-suggest-change>Suggest a change</button>' : "";
+}
+
+function openSuggestChangeDialog(type, entry = null) {
+  const href = document.body.dataset.suggestHref;
+  if (!href) return;
+  const definition = state.model.resources[type];
+  const subject = entry ? entry.record.title : definition.pluralTitle;
+  const filePath = entry ? entry.relativePath : definition.singleton ? "data/" + definition.singleton : "data/" + (definition.collection || type) + "/";
+  const dialog = document.createElement("dialog");
+  dialog.className = "alert-dialog suggest-change-dialog";
+  dialog.setAttribute("aria-labelledby", "suggest-change-title");
+  dialog.innerHTML = '<form method="dialog" class="suggest-change-form"><div class="dialog-head"><div><p class="kicker">Suggest a change</p><h2 id="suggest-change-title">' + esc(subject) + '</h2></div><button type="button" class="icon-button" data-close aria-label="Close">×</button></div>' +
+    '<div class="suggest-change-body"><label for="suggest-change-text">What is wrong, or what should change?</label><textarea id="suggest-change-text" name="text" rows="5" maxlength="4000" required></textarea>' +
+    '<details class="suggest-change-help"><summary>How it works</summary><div class="markdown" data-suggest-guide><p>Loading…</p></div>' +
+    '<h3>Change it yourself</h3><p>Edit <code>' + esc(filePath) + '</code> in the program repository, or run the local editor with <code>npx filegrc serve</code>, then open a pull request.</p></details>' +
+    '<p class="dialog-error" role="alert"></p><p class="suggest-change-sent" role="status" hidden>Sent. The agent will propose the change for approval.</p></div>' +
+    '<div class="dialog-actions"><button type="button" class="button" data-close>Cancel</button><button type="submit" class="button primary">Send suggestion</button></div></form>';
+  document.body.append(dialog);
+  dialog.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  dialog.querySelector(".suggest-change-help").addEventListener("toggle", async (event) => {
+    const guide = dialog.querySelector("[data-suggest-guide]");
+    if (!event.currentTarget.open || guide.dataset.loaded) return;
+    guide.dataset.loaded = "true";
+    try {
+      const response = await fetch(href + "/guide", { headers: { accept: "application/json" } });
+      if (!response.ok) throw new Error(await responseMessage(response));
+      guide.innerHTML = (await response.json()).html;
+    } catch {
+      guide.innerHTML = "<p>Your suggestion becomes an action. The compliance agent proposes a change, and the record's owner approves it on the Actions page.</p>";
+    }
+  });
+  dialog.querySelector("form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const error = dialog.querySelector(".dialog-error");
+    const submit = form.querySelector('[type="submit"]');
+    if (!form.reportValidity() || submit.disabled) return;
+    error.textContent = "";
+    submit.disabled = true;
+    submit.textContent = "Sending…";
+    try {
+      const response = await fetch(href, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ recordType: type, recordId: entry?.record.id || null, text: form.elements.text.value })
+      });
+      if (!response.ok) throw new Error(await responseMessage(response));
+      form.elements.text.disabled = true;
+      dialog.querySelector(".suggest-change-sent").hidden = false;
+      submit.hidden = true;
+      form.querySelector(".dialog-actions [data-close]").textContent = "Close";
+    } catch (failure) {
+      error.textContent = failure.message;
+      submit.disabled = false;
+      submit.textContent = "Send suggestion";
+    }
+  });
+  dialog.showModal();
+  dialog.querySelector("textarea").focus();
 }
 
 function auditSpecificDocument(record) {
@@ -3952,7 +4258,7 @@ function renderDetail(main, type, id, params = new URLSearchParams()) {
     ? '<a class="button" href="#/resources/' + encodeURIComponent(type) + '?review=1">' + (applicabilityStatus === "stale" ? "Reconfirm" : "Review") + ' applicability</a>'
     : "";
   const recordMenu = '<details class="record-overflow"><summary aria-label="More record actions" title="More record actions"><svg viewBox="0 0 18 4" aria-hidden="true"><circle cx="2" cy="2" r="2"></circle><circle cx="9" cy="2" r="2"></circle><circle cx="16" cy="2" r="2"></circle></svg></summary><div class="record-overflow-menu" aria-label="Record actions"><button type="button" data-record-modal="info">Record info</button><button type="button" data-record-modal="connections">Connections</button><button type="button" data-record-modal="history"' + (entry.historyLoaded === false ? ' disabled' : '') + '>File history' + (entry.historyLoaded === false ? ' (loading)' : '') + '</button>' + (mayDelete ? '<div class="record-overflow-separator"></div><button class="danger-text" type="button" data-delete-resource>Delete record</button>' : '') + '</div></details>';
-  main.innerHTML = '<div class="page"><div class="detail-head"><div><div class="breadcrumbs header-breadcrumbs"><a href="' + collectionHref + '">' + esc(collectionLabel) + '</a><span>/</span><span>' + esc(entry.record.title) + '</span></div><h2>' + esc(titleCase(entry.nonmaterialView?.record.title || entry.record.title)) + '</h2></div><div class="actions">' + reportingRouteSetActions + periodImpactAction + ruleWithdrawalAction + ruleCorrectionAction + amendmentAction + retentionApplicationAction + auditCycleAction + auditPopulationCorrectionAction + (type === "audit" ? '<a class="button primary" href="#/audit-packet?auditId=' + encodeURIComponent(entry.record.id) + '">Audit Evidence &amp; Packet</a>' : "") + governanceActions + lifecycleActions + issueActions + applicabilityAction + addRecordContentAction + (!state.readOnly && !routeSetLocked && !withdrawnRuleLocked ? '<button class="button" id="edit-resource">Edit</button>' : "") + recordMenu + '</div></div>' + amendmentPanel + periodImpactPanel + ruleWithdrawalPanel + '<div class="detail-grid ' + (hasRecordBody ? "" : "detail-grid-structured") + (type === "control" ? " detail-control" : "") + '">' + detailMain + supportPanels + (hasStructuredMetadata ? recordFieldsPanel : "") + '</div></div>';
+  main.innerHTML = '<div class="page"><div class="detail-head"><div><div class="breadcrumbs header-breadcrumbs"><a href="' + collectionHref + '">' + esc(collectionLabel) + '</a><span>/</span><span>' + esc(entry.record.title) + '</span></div><h2>' + esc(titleCase(entry.nonmaterialView?.record.title || entry.record.title)) + '</h2></div><div class="actions">' + reportingRouteSetActions + periodImpactAction + ruleWithdrawalAction + ruleCorrectionAction + amendmentAction + retentionApplicationAction + auditCycleAction + auditPopulationCorrectionAction + (type === "audit" ? '<a class="button primary" href="#/audit-packet?auditId=' + encodeURIComponent(entry.record.id) + '">Audit Evidence &amp; Packet</a>' : "") + governanceActions + lifecycleActions + issueActions + applicabilityAction + addRecordContentAction + (!state.readOnly && !routeSetLocked && !withdrawnRuleLocked ? '<button class="button" id="edit-resource">Edit</button>' : "") + suggestChangeButton() + recordMenu + '</div></div>' + amendmentPanel + periodImpactPanel + ruleWithdrawalPanel + '<div class="detail-grid ' + (hasRecordBody ? "" : "detail-grid-structured") + (type === "control" ? " detail-control" : "") + '">' + detailMain + supportPanels + (hasStructuredMetadata ? recordFieldsPanel : "") + '</div></div>';
   main.querySelectorAll("[data-completion-requirements]").forEach((button) => button.addEventListener("click", () => openCompletionRequirementsDialog(button.dataset.completionRequirements)));
   main.querySelector("[data-review-period-impact]")?.addEventListener("click", () => openPeriodImpactReview(entry.record.id));
   main.querySelector("[data-withdraw-obligation-rule]")?.addEventListener("click", () => openObligationRuleWithdrawal(entry.record.id));
@@ -3969,6 +4275,7 @@ function renderDetail(main, type, id, params = new URLSearchParams()) {
   });
   main.querySelector("[data-amend-nonmaterial]")?.addEventListener("click", () => openNonmaterialAmendmentDialog(amendmentTarget, amendmentTarget !== entry ? entry : null));
   main.querySelector("#edit-resource")?.addEventListener("click", () => openEditor(type, entry));
+  main.querySelector(".detail-head [data-suggest-change]")?.addEventListener("click", () => openSuggestChangeDialog(type, entry));
   main.querySelectorAll("[data-record-modal]").forEach((button) => button.addEventListener("click", () => {
     button.closest("details")?.removeAttribute("open");
     openRecordUtilityDialog(entry, button.dataset.recordModal);
@@ -7458,6 +7765,14 @@ dialog::backdrop{background:rgba(0,0,24,.62)}
 .workflow-guidance .workflow-status{margin:4px 0 12px;color:var(--muted);font-size:10px}.workflow-completion-requirements{display:inline;appearance:none;-webkit-appearance:none;white-space:nowrap;padding:0;border:0;background:none;color:var(--accent);font:inherit;font-weight:750;cursor:pointer;text-decoration:underline;text-underline-offset:2px}.workflow-completion-requirements:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.completion-requirements-dialog ul{margin:14px 0 0;padding-left:20px;color:var(--muted);font-size:12px;line-height:1.55}
 .control-next-steps{margin:8px 0 9px;padding-left:18px;font-size:12px;line-height:1.5}.control-next-steps li+li{margin-top:7px}.detail-control aside .detail-workflow-panel{max-height:none;overflow:visible}
 .record-completion-state{background:var(--surface-soft)}.record-completion-state h3{margin:4px 0 5px;font-size:16.8px}.record-completion-state p:last-child{margin:0;color:var(--muted);font-size:11px;line-height:1.45}
+html:has(>body.standalone-page),body.standalone-page{height:auto;overflow:auto}
+.action-page{max-width:900px}.action-heading{margin:4px 0 6px;font-size:24px}.action-filters{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:flex-end;margin:14px 0}.action-filters label{display:grid;gap:4px;font-size:12px;font-weight:700}.action-filters select{min-height:40px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink)}.action-filters .action-check{display:flex;align-items:center;gap:8px;min-height:40px}.action-filters .action-check input{width:20px;height:20px}.action-count{color:var(--muted);font-size:13px}
+.action-card{margin:0 0 14px}.action-card h2{margin:6px 0 10px;font-size:18px;line-height:1.3}.action-card h3{margin:14px 0 4px;font-size:13px}.action-facts{display:flex;flex-wrap:wrap;gap:6px 22px;margin:0}.action-facts div{min-width:0}.action-facts dt{color:var(--muted);font-size:11px}.action-facts dd{margin:0;font-size:13.5px;font-weight:650;overflow-wrap:anywhere}.action-links{margin:0;padding-left:20px}.action-links li{margin:3px 0;overflow-wrap:anywhere}.action-note{color:var(--muted);font-size:13px}.action-pending{margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--accent-soft)}.action-pending p{margin:0 0 4px}.action-pending ul{margin:0;padding-left:20px}
+.action-decide{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;margin-top:14px}.action-decide details{flex:1 1 220px;min-width:0}.action-decide summary{min-height:40px;display:inline-flex;align-items:center;padding:0 13px;border:1px solid var(--line);border-radius:7px;cursor:pointer;font-weight:650}.action-decide details[open] form{display:grid;gap:8px;margin-top:8px}.action-decide textarea{width:100%;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink)}.action-decide .button{min-height:40px}
+@media(max-width:520px){.action-filters label{flex:1 1 100%}.action-filters select{width:100%}.action-decide>form,.action-decide details{flex:1 1 100%}.action-decide .button{width:100%}}
+.filter-bar{margin:0 0 14px}.filter-toolbar{display:flex;align-items:center;gap:8px;min-width:0}.filter-search{flex:1 1 220px;min-width:0}.filter-search input{width:100%;min-height:38px;border:1px solid var(--line);border-radius:7px;background:var(--field,#fff);color:var(--ink);padding:8px 11px;font-size:14px}.filter-buttons{display:flex;gap:6px;flex-wrap:wrap}.filter-menu{position:relative}.filter-menu>summary{display:inline-flex;align-items:center;gap:5px;min-height:38px;padding:0 11px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink);font-size:13px;font-weight:650;white-space:nowrap;cursor:pointer;list-style:none}.filter-menu>summary::-webkit-details-marker{display:none}.filter-menu.active>summary{border-color:var(--accent);color:var(--accent)}.filter-menu>summary:focus-visible,.filter-options button:focus-visible,.filter-chip:focus-visible,.filter-clear:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.filter-caret{font-size:10px}.filter-options{position:absolute;z-index:30;top:calc(100% + 4px);left:0;display:grid;min-width:180px;max-width:min(320px,calc(100vw - 32px));max-height:320px;overflow:auto;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 8px 24px rgba(0,0,0,.14)}.filter-options button{padding:8px 10px;border:0;border-radius:6px;background:none;color:var(--ink);text-align:left;font-size:13px;cursor:pointer;overflow-wrap:anywhere}.filter-options button:hover{background:var(--accent-soft)}.filter-options button[aria-pressed="true"]{font-weight:750;color:var(--accent)}.filter-options a{display:block;padding:8px 10px;border-radius:6px;color:var(--ink);text-decoration:none;font-size:13px}.filter-options a:hover{background:var(--accent-soft)}.filter-options a[aria-current="true"]{font-weight:750;color:var(--accent)}.filter-count{margin-left:auto;color:var(--muted);font-size:12px;white-space:nowrap}.filter-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}.filter-chip{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--accent-soft);color:var(--ink);font-size:12px;text-decoration:none;cursor:pointer}.filter-clear{border:0;background:none;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;padding:4px}
+@media(max-width:620px){.filter-toolbar{flex-wrap:wrap}.filter-search{flex:1 1 100%}.filter-buttons{flex:1 1 auto}.filter-menu:last-child .filter-options{left:auto;right:0}}
+.suggest-change-dialog{width:min(560px,calc(100vw - 32px))}.suggest-change-body{display:grid;gap:8px;margin-top:12px}.suggest-change-body label{font-weight:700;font-size:13px}.suggest-change-body textarea{width:100%;padding:9px;border:1px solid var(--line);border-radius:7px;background:var(--field,#fff);color:var(--ink)}.suggest-change-help{font-size:13px}.suggest-change-help summary{cursor:pointer;font-weight:700;padding:4px 0}.suggest-change-help h3{margin:12px 0 4px;font-size:13px}.suggest-change-help code{overflow-wrap:anywhere}.suggest-change-sent{margin:0;padding:10px 12px;border-radius:8px;background:var(--accent-soft);font-weight:650}.suggest-change-dialog .dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap}
 `;
 
 function safeJson(value) {

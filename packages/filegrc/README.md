@@ -107,10 +107,39 @@ Hosted mode puts Google sign-in in front of every page and API route. It is off 
 | `FILEGRC_PUBLIC_URL` | The HTTPS address people open, such as `https://grc.example.com`. Register `<FILEGRC_PUBLIC_URL>/auth/callback` as the client's redirect URI. |
 | `FILEGRC_ADMIN_EMAILS` | Optional. Comma-separated emails of people who may issue auditor links. Each must be in the allowed domain and match an `active` Person; other entries are ignored. |
 | `FILEGRC_AUDITOR_LINK_SECRET` | Optional. At least 32 random characters used to sign auditor links, so they stay valid across restarts. Unset, each start uses a new key. |
+| `FILEGRC_ACTION_DECISIONS_BRANCH` | Optional. The branch that action decisions and change suggestions are pushed to. Defaults to `action-decisions`; it must differ from the authoritative branch. |
 
 A person can sign in only when Google reports a verified email in the allowed domain and an `active` Person record has the same `email`. Anyone else gets a 403 page and no session. The session is an HMAC-signed `HttpOnly`, `Secure`, `SameSite=Lax` cookie that lasts 8 hours; nothing is stored on disk or under `data/`. Changing `FILEGRC_SESSION_SECRET` signs everyone out. Open `/auth/logout` to sign out.
 
-Signed-in people can read the program but cannot change it: the app reports itself read-only and hides edit controls, and hosted mode rejects every write with 403, except two: acknowledgements, below, and `POST /api/auditor-links` for people listed in `FILEGRC_ADMIN_EMAILS`. Admins get no other write access; when the variable is unset, everyone gets 403 for auditor links. At `/acknowledgements` a signed-in person sees the approved Training, Policies, and Documents that program readiness says they still owe, reads each one, and confirms it. The server creates one completed `git-approval` Attestation for the signed-in Person, bound to the subject's current content revision, and commits only that file to the authoritative branch through the normal trunk browser write, then pushes it. The request cannot choose the Person. The commit uses the server's Git identity; the message names the Person. A JSON `POST /acknowledgements` with `{ "record": { "subjectResourceIds": ["<id>"] } }` does the same and returns the created record. Serve over HTTPS, for example behind a TLS reverse proxy, because browsers drop `Secure` cookies on plain HTTP.
+Signed-in people can read the program but cannot change it: the app reports itself read-only and hides edit controls, and hosted mode rejects every write with 403, except four: acknowledgements, below, `POST /api/auditor-links` for people listed in `FILEGRC_ADMIN_EMAILS`, and the action decisions and change suggestions described in the next section. Admins get no other write access; when the variable is unset, everyone gets 403 for auditor links. At `/acknowledgements` a signed-in person sees the approved Training, Policies, and Documents that program readiness says they still owe, reads each one, and confirms it. The server creates one completed `git-approval` Attestation for the signed-in Person, bound to the subject's current content revision, and commits only that file to the authoritative branch through the normal trunk browser write, then pushes it. The request cannot choose the Person. The commit uses the server's Git identity; the message names the Person. A JSON `POST /acknowledgements` with `{ "record": { "subjectResourceIds": ["<id>"] } }` does the same and returns the created record. Serve over HTTPS, for example behind a TLS reverse proxy, because browsers drop `Secure` cookies on plain HTTP.
+
+### Action register and change suggestions
+
+A workspace may keep an action register: one JSON file per question in `actions/<ID>.json`, outside `data/` and not validated as records. FileGRC reads `id`, `title`, `ownerId` (a Person ID), `status` (`open`, `proposed`, `accepted`, `rejected`, `done`, `dropped`), `priority` (`p1`-`p3`), `blocksPeriodStart`, `due`, `question`, `suggestedAnswer`, `evidence` (`[{ label, url | path }]`), `confidence`, `kind`, `links`, `decision` and `history`; `actions/schema.json` is ignored. When the folder has an action, the sidebar links to `/actions`.
+
+`/actions` lists the register with a toolbar of filters: search, owner, status, priority and "blocks the period start". With no filter in the URL a signed-in person sees their own actions that wait for a decision (`open` or `proposed`). Everyone signed in can read every action. The owner, or anyone in `FILEGRC_ADMIN_EMAILS`, can **Approve** (accept the suggested answer as written), send **Feedback** (free text; the status does not change) or **Reject** (with a reason). Locally the page is read-only.
+
+The server never writes a decision to the authoritative branch, so branch protection on it stays intact. Each decision is one new file, `actions/decisions/<ID>/<decision id>.json`, committed on top of the decisions branch with plumbing commands (the checked-out branch, its index and working tree are not touched) and pushed with the server's normal Git credentials. A rejected push is fetched and retried. The file holds:
+
+```json
+{
+  "id": "20261103T140509123Z-a1b2c3",
+  "actionId": "ACT-001",
+  "outcome": "approved",
+  "by": "person-id",
+  "email": "person@example.com",
+  "on": "2026-11-03T14:05:09.123Z",
+  "note": "",
+  "approvedAnswer": "The suggested answer as it read when approved",
+  "actionStatusBefore": "proposed"
+}
+```
+
+`outcome` is `approved`, `feedback` or `rejected`; `note` is required for the last two; `approvedAnswer` appears only on approvals; `on` is UTC. The commit's author is the deciding Person. The page shows these decisions over the register as "waiting to be filed" (an approval shows the action as accepted, a rejection as rejected) until the register catches up: when the action's `history` has an entry with the same `on`, `by` and `outcome` (or that `decisionId`), its own `decision.on` is the same or later, or its status is no longer `open` or `proposed`. Whoever maintains the register folds the files into the action records through a normal reviewed change and copies each decision's `outcome`, `by`, `on` and `note` into `history`.
+
+Every record and list page in hosted mode also has **Suggest a change**. Anyone signed in describes what is wrong; the server saves `actions/suggestions/<timestamp>-<record>-<suffix>.json` on the same branch with `id`, `kind: "suggestion"`, `recordType`, `recordId` (`null` for a whole list), `recordTitle`, `recordPath`, `text`, `by`, `email` and `on`. The dialog's "How it works" text comes from `faq/suggest-a-change.md` when it exists, without its first heading, and from a built-in default otherwise. Each decision and suggestion is logged to stdout as one `[filegrc audit]` JSON line.
+
+The sidebar shows the workspace record's optional `brandName` and `brandSubtitle`, defaulting to FileGRC and SOC 2 workspace.
 
 The authoritative data model ships in this package. Import the public Node.js API from `filegrc` and the model loader from `filegrc/model`.
 

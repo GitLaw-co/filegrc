@@ -717,6 +717,16 @@
           "type": "string",
           "label": "Description",
           "search": true
+        },
+        "brandName": {
+          "type": "string",
+          "label": "Sidebar name",
+          "description": "Optional name at the top of the sidebar. Defaults to FileGRC."
+        },
+        "brandSubtitle": {
+          "type": "string",
+          "label": "Sidebar subtitle",
+          "description": "Optional line under the sidebar name. Defaults to SOC 2 workspace."
         }
       },
       "listFields": [

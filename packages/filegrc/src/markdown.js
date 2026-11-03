@@ -86,6 +86,8 @@ export function renderMarkdown(source = "") {
       flush();
       continue;
     }
+    // A plain line ends an open list, so it renders after the list, not before it.
+    flushList();
     paragraph.push(line.trim());
   }
   flush();
