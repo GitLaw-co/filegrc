@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import vm from "node:vm";
-import { applyPendingDecisions, actionFilters, filterActions } from "../src/action-register.js";
+import { answerRevision, applyPendingDecisions, actionFilters, createActionRegister, filterActions } from "../src/action-register.js";
 import { runCli } from "../src/cli.js";
 import { signSession } from "../src/hosted-auth.js";
 import { serveWorkspace } from "../src/server.js";
@@ -23,6 +23,7 @@ const BRANCH = "action-decisions";
 
 const git = async (cwd, args) => (await execute("git", args, { cwd })).stdout.trim();
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
+const seen = (id) => answerRevision(`Suggested answer for ${id}.`);
 
 function action(id, fields = {}) {
   return {
@@ -142,7 +143,8 @@ test("signed-in people see their own open actions by default and can filter the 
   const everyone = await page(OWNER, "?owner=&status=all");
   for (const id of ["ACT-001", "ACT-002", "ACT-003", "ACT-004"]) assert.match(everyone.body, new RegExp(`id="${id}"`));
   assert.match(everyone.body, /Other &lt;script&gt;x&lt;\/script&gt;/);
-  assert.doesNotMatch(everyone.body, /<script>/);
+  assert.doesNotMatch(everyone.body, /<script>x/);
+  assert.equal(everyone.body.match(/<script>/g).length, 1, "only the page's own menu script");
   assert.doesNotMatch(everyone.body, /href="javascript:/);
   assert.doesNotMatch(everyone.body, /schema/);
 
@@ -167,7 +169,17 @@ test("approving saves one decision file on the decisions branch and leaves main 
   const mainBefore = await git(remote, ["rev-parse", "main"]);
   const headBefore = await git(root, ["rev-parse", "HEAD"]);
 
-  const response = await decide(OWNER, { actionId: "ACT-001", decision: "approve", owner: "", status: "all" });
+  // An Approve names the answer the owner read; a stale or missing one is refused.
+  for (const stale of [{}, { answerRevision: answerRevision("An older answer.") }]) {
+    const refused = await decide(OWNER, { actionId: "ACT-001", decision: "approve", ...stale });
+    assert.equal(refused.status, 409);
+    assert.match(await refused.text(), /changed after you opened the page/);
+  }
+  assert.equal((await decisionFiles(remote)).length, 0);
+  const shown = await page(OWNER);
+  assert.match(shown.body, new RegExp(`name="answerRevision" value="${seen("ACT-001")}"`));
+
+  const response = await decide(OWNER, { actionId: "ACT-001", decision: "approve", answerRevision: seen("ACT-001"), owner: "", status: "all" });
   assert.equal(response.status, 303, await response.text());
   assert.equal(response.headers.get("location"), "/actions?owner=&status=all&decided=ACT-001&outcome=approved#ACT-001");
 
@@ -249,7 +261,7 @@ test("only the owner or an admin can decide; everyone else and cross-site posts 
 
   // The admin owns ACT-002 and may also decide on ACT-001.
   assert.match((await page(OTHER, "?owner=&status=all")).body, /name="actionId" value="ACT-001">/);
-  assert.equal((await decide(OTHER, { actionId: "ACT-001", decision: "approve" })).status, 303);
+  assert.equal((await decide(OTHER, { actionId: "ACT-001", decision: "approve", answerRevision: seen("ACT-001") })).status, 303);
   const [file] = await decisionFiles(remote);
   const saved = JSON.parse(await git(remote, ["show", `${BRANCH}:${file}`]));
   assert.deepEqual([saved.by, saved.email], [OTHER, "approver@example.test"]);
@@ -269,6 +281,17 @@ test("a decision stops showing as pending once the register records it", async (
     history: [{ outcome: saved.outcome, by: saved.by, on: saved.on, note: saved.note }]
   })));
   assert.doesNotMatch((await page(OWNER)).body, /Add the SOC report\./);
+});
+
+test("decisions can never be pointed at the authoritative branch", async (context) => {
+  const { root } = await fixture(context);
+  for (const branch of ["main", "MASTER", "trunk"]) {
+    assert.throws(() => createActionRegister(root, { decisionsBranch: branch }), /cannot go to/);
+  }
+  // The checked-out branch is refused even when renderer settings name no authoritative branch.
+  await git(root, ["checkout", "-q", "-b", "release"]);
+  const register = createActionRegister(root, { decisionsBranch: "release" });
+  await assert.rejects(register.decide({ actionId: "ACT-001", outcome: "feedback", note: "x", viewer: { personId: OWNER, email: "jordan.lee@example.test" } }), /other than the authoritative branch/);
 });
 
 test("a line after a list renders after the list", async () => {

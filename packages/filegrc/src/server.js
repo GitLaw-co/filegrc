@@ -24,7 +24,7 @@ import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
 import { auditorLinkSecretFromEnv, createAuditorView } from "./auditor-view.js";
-import { actionDecisionsBranchFromEnv, actionFilters, canDecideAction, createActionRegister, filterActions } from "./action-register.js";
+import { actionDecisionsBranchFromEnv, actionFilters, answerRevision, canDecideAction, createActionRegister, filterActions } from "./action-register.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -1092,7 +1092,7 @@ async function actions(register, request, response, url, viewer) {
       exists: view.exists,
       people: view.people ?? [],
       allActions: view.actions,
-      actions: shown.map((action) => ({ ...action, canDecide: canDecideAction(action, viewer) })),
+      actions: shown.map((action) => ({ ...action, canDecide: canDecideAction(action, viewer), answerRevision: answerRevision(action.suggestedAnswer) })),
       filters,
       problems: view.problems,
       decided: extra.decided ?? (url.searchParams.get("decided") ? { actionId: url.searchParams.get("decided"), outcome: url.searchParams.get("outcome") } : null),
@@ -1108,7 +1108,9 @@ async function actions(register, request, response, url, viewer) {
   if (!viewer) return page(403, { filterParams, error: "Sign in on the hosted site to decide on an action." });
   try {
     const outcome = { approve: "approved", feedback: "feedback", reject: "rejected" }[form.get("decision")];
-    const result = await register.decide({ actionId: form.get("actionId"), outcome, note: form.get("note"), viewer });
+    const result = await register.decide({
+      actionId: form.get("actionId"), outcome, note: form.get("note"), answerRevision: form.get("answerRevision"), viewer
+    });
     console.log(`[filegrc audit] ${JSON.stringify({
       event: "action-decision", personId: viewer.personId, email: viewer.email, actionId: result.decision.actionId,
       outcome: result.decision.outcome, decisionId: result.decision.id, branch: result.branch, commit: result.commit

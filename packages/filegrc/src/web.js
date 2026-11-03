@@ -255,6 +255,21 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
     ${body}
     <p><a href="/">Open the program</a>${viewer ? ` · <a href="/auth/logout">Sign out</a>` : ""}</p>
   </main>
+  <script>
+    // Filter menus: one open at a time; Escape, Tab away or a click outside closes it.
+    const menus = [...document.querySelectorAll(".filter-menu")];
+    const close = (except) => menus.forEach((menu) => { if (menu !== except) menu.open = false; });
+    menus.forEach((menu) => {
+      menu.addEventListener("toggle", () => { if (menu.open) close(menu); });
+      menu.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && menu.open) { menu.open = false; menu.querySelector("summary").focus(); }
+      });
+      menu.addEventListener("focusout", (event) => {
+        if (event.relatedTarget && !menu.contains(event.relatedTarget)) menu.open = false;
+      });
+    });
+    document.addEventListener("pointerdown", (event) => close(menus.find((menu) => menu.contains(event.target))));
+  </script>
 </body>
 </html>`;
 }
@@ -274,7 +289,7 @@ function actionCard(action, { personName, hidden, viewer }) {
       : "";
   const pending = (action.pendingDecisions ?? []).map((decision) => `<li><strong>${escapeHtml(ACTION_OUTCOME_LABELS[decision.outcome] || decision.outcome)}</strong> by ${escapeHtml(personName(decision.by))} on ${escapeHtml(formatUtc(decision.on))}${decision.note ? `: ${escapeHtml(decision.note)}` : ""}</li>`).join("");
   const form = (decision, button, field) => `<form method="post" action="/actions">
-        <input type="hidden" name="actionId" value="${id}"><input type="hidden" name="decision" value="${decision}">${hidden}
+        <input type="hidden" name="actionId" value="${id}"><input type="hidden" name="decision" value="${decision}">${decision === "approve" ? `<input type="hidden" name="answerRevision" value="${escapeHtml(action.answerRevision ?? "")}">` : ""}${hidden}
         ${field ? `<label for="${id}-${decision}-note">${field}</label><textarea id="${id}-${decision}-note" name="note" rows="3" maxlength="4000" required></textarea>` : ""}
         <button class="button${decision === "approve" ? " primary" : ""}" type="submit">${button}</button>
       </form>`;
@@ -4010,6 +4025,11 @@ function setupFilterToolbar(container) {
       menus.forEach((other) => { if (other !== menu) other.open = false; });
       (menu.querySelector('[aria-pressed="true"]') || menu.querySelector("[data-value]"))?.focus();
     });
+    // Tabbing out closes the menu. A click that moves no focus (Safari) has no
+    // relatedTarget and is left to the outside-pointer handler.
+    menu.addEventListener("focusout", (event) => {
+      if (event.relatedTarget && !menu.contains(event.relatedTarget)) menu.open = false;
+    });
     menu.querySelector(".filter-options").addEventListener("click", (event) => {
       const option = event.target.closest("[data-value]");
       if (!option) return;
@@ -4027,8 +4047,9 @@ function setupFilterToolbar(container) {
       if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) || !menu.open) return;
       const options = [...menu.querySelectorAll("[data-value]")];
       const index = options.indexOf(document.activeElement);
-      const target = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
-        : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+      const target = event.key === "Home" || (index === -1 && event.key === "ArrowDown") ? 0
+        : event.key === "End" || (index === -1 && event.key === "ArrowUp") ? options.length - 1
+          : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
       event.preventDefault();
       options[target]?.focus();
     });
