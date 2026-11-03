@@ -66,7 +66,7 @@ async function fixture(context, { faq = true } = {}) {
       response.on("end", () => resolve({ status: response.statusCode, location: response.headers.location, body }));
     }).on("error", reject).end();
   });
-  return { root, get };
+  return { root, get, cookie };
 }
 
 test("the help index lists faq pages by file name with their headings", async (context) => {
@@ -111,10 +111,10 @@ test("the nav shows Help only when faq/ holds a Markdown page", async (context) 
   const withoutFaq = await fixture(context, { faq: false });
   const shown = /data-help-href="([^"]+)"/.exec((await withFaq.get("/")).body)?.[1];
   assert.equal(shown, "/faq");
-  assert.equal(helpNavigation({ helpHref: shown }), '<a class="help-nav" href="/faq">Help</a>');
+  assert.equal(helpNavigation({ helpHref: shown }), '<a class="help-nav" href="#/help">Help</a>');
   assert.doesNotMatch((await withoutFaq.get("/")).body, /data-help-href/);
   assert.equal(helpNavigation({}), "");
-  assert.ok(APP_SCRIPT.includes("<div class=\"sidebar-footer\">' + helpNavigation() + '"));
+  assert.ok(APP_SCRIPT.includes("<div class=\"sidebar-footer\">' + helpNavigation(route) + '"));
 });
 
 test("a faq/ folder does not affect workspace validation", async (context) => {
@@ -124,4 +124,17 @@ test("a faq/ folder does not affect workspace validation", async (context) => {
   }
   const validation = await captureCli(runCli, ["validate", "--root", root]);
   assert.equal(validation.exitCode, 0, validation.stdout + validation.stderr);
+});
+
+test("help opens inside the app: browsers are sent to #/help and the app loads a fragment", async (context) => {
+  const { get, cookie } = await fixture(context);
+  const index = await get("/faq?fragment=1");
+  assert.doesNotMatch(index.body, /<!doctype html>/i);
+  assert.match(index.body, /<a href="#\/help\/a-first">A first<\/a>/);
+  const page = await get("/faq/a-first?fragment=1");
+  assert.match(page.body, /<a href="#\/help">Help<\/a>/);
+  assert.doesNotMatch(page.body, /<!doctype html>/i);
+  const navigate = await get("/faq/a-first", { cookie, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" });
+  assert.equal(navigate.status, 302);
+  assert.equal(navigate.location, "/#/help/a-first");
 });

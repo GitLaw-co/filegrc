@@ -2986,6 +2986,9 @@ Record Markdown: available when needed as an implicit companion file.
 | `description` | string | No | Description |
 | `brandName` | string | No | Sidebar name |
 | `brandSubtitle` | string | No | Sidebar subtitle |
+| `guideTitle` | string | No | Guide title |
+| `guideMessage` | string | No | Guide summary |
+| `guideHref` | string | No | Guide link |
 
 #### `renderer-settings`
 

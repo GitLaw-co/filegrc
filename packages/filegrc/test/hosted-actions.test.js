@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { request } from "node:http";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import vm from "node:vm";
-import { answerRevision, applyPendingDecisions, actionFilters, createActionRegister, filterActions } from "../src/action-register.js";
+import { answerRevision, applyPendingDecisions, actionFilters, createActionRegister, filterActions, summarizeActions } from "../src/action-register.js";
 import { runCli } from "../src/cli.js";
 import { signSession } from "../src/hosted-auth.js";
 import { serveWorkspace } from "../src/server.js";
@@ -327,9 +328,11 @@ test("the sidebar links to Actions when the register exists and shows the worksp
   const index = await (await fetch(`${url}/`, { headers: { cookie: as(OWNER) } })).text();
   assert.match(index, /data-actions-href="\/actions"/);
   const source = APP_SCRIPT.slice(APP_SCRIPT.indexOf("function helpNavigation"), APP_SCRIPT.indexOf("function hostedNavigation"));
-  const navigation = (dataset) => vm.runInNewContext(source + "\nhelpNavigation()", { document: { body: { dataset } }, esc: String });
-  assert.equal(navigation({ actionsHref: "/actions", helpHref: "/faq" }), '<a class="help-nav" href="/actions">Actions</a><a class="help-nav" href="/faq">Help</a>');
-  assert.equal(navigation({}), "");
+  const navigation = (dataset, route = {}) => vm.runInNewContext(source + "\nhelpNavigation(route) + '|' + primaryNavigation(route)", {
+    document: { body: { dataset } }, esc: String, route, state: { actionSummary: { counts: { waiting: 3 } } }
+  });
+  assert.equal(navigation({ actionsHref: "/actions", helpHref: "/faq" }, { name: "actions" }), '<a class="help-nav" href="#/help">Help</a>|<div class="sidebar-primary-nav"><a class="current" href="#/actions"><span>Actions</span><span class="sidebar-action-count" aria-label="3 waiting for your decision">3</span></a></div>');
+  assert.equal(navigation({}), "|");
 
   assert.ok(APP_SCRIPT.includes('esc(state.workspace.brandName || "FileGRC")'));
   assert.ok(APP_SCRIPT.includes('esc(state.workspace.brandSubtitle || "SOC 2 workspace")'));
@@ -418,4 +421,66 @@ test("list pages and the dialog render the shared toolbar and suggestion markup"
   assert.ok(APP_SCRIPT.includes("<summary>How it works</summary>"));
   assert.ok(APP_SCRIPT.includes("<h3>Change it yourself</h3>"));
   assert.ok(APP_SCRIPT.includes(`'<button class="button" id="edit-resource">Edit</button>' : "") + suggestChangeButton() + recordMenu`));
+});
+
+test("the overview summary counts the signed-in person's waiting actions, or everyone's", async (context) => {
+  const summary = summarizeActions([
+    action("A", { priority: "p1", blocksPeriodStart: true, due: "2026-11-01" }),
+    action("B", { due: "2026-12-01" }),
+    action("C", { ownerId: OTHER, blocksPeriodStart: true }),
+    action("D", { status: "done" })
+  ], { viewerPersonId: OWNER, today: "2026-11-03" });
+  assert.equal(summary.scope, "viewer");
+  assert.deepEqual(summary.counts, { waiting: 2, blocking: 1, overdue: 1, waitingEveryone: 3, blockingEveryone: 2 });
+  assert.deepEqual(summary.items.map(({ id, overdue }) => [id, overdue]), [["A", true], ["B", false]]);
+  assert.equal(summarizeActions([action("A"), action("C", { ownerId: OTHER })]).scope, "everyone");
+
+  const { url, as } = await fixture(context);
+  const response = await fetch(`${url}/api/actions/summary`, { headers: { cookie: as(OWNER) } });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.summary.scope, "viewer");
+  assert.deepEqual(body.summary.items.map(({ id }) => id), ["ACT-001", "ACT-004"]);
+  assert.equal(body.summary.items[0].ownerName.length > 0, true);
+  const anonymous = await fetch(`${url}/api/actions/summary`, { redirect: "manual" });
+  assert.equal(anonymous.status, 401);
+});
+
+test("Actions opens inside the app: browsers are sent to #/actions and the app loads a fragment", async (context) => {
+  const { url, as, decide } = await fixture(context);
+  // fetch() sets its own Sec-Fetch-Mode, so a browser navigation needs a raw request.
+  const navigate = await new Promise((resolve, reject) => {
+    request(`${url}/actions?owner=&status=all`, { headers: { cookie: as(OWNER), "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" } }, (response) => {
+      response.resume();
+      resolve({ status: response.statusCode, location: response.headers.location });
+    }).on("error", reject).end();
+  });
+  assert.equal(navigate.status, 302);
+  assert.equal(navigate.location, "/#/actions?owner=&status=all");
+  const fragment = await (await fetch(`${url}/actions?fragment=1&owner=&status=all`, { headers: { cookie: as(OWNER) } })).text();
+  assert.doesNotMatch(fragment, /<!doctype html>/i);
+  assert.match(fragment, /^<div class="action-page">/);
+  assert.match(fragment, /href="#\/actions\?q=&amp;owner=&amp;status=all/);
+  const decided = await decide(OWNER, { actionId: "ACT-001", decision: "approve", answerRevision: seen("ACT-001"), owner: "", status: "all", fragment: "1" });
+  assert.equal(decided.status, 303);
+  assert.match(decided.headers.get("location"), /^\/actions\?owner=&status=all&decided=ACT-001&outcome=approved&fragment=1#ACT-001$/);
+});
+
+test("a workspace guide replaces the Autopilot promotion and validates", async (context) => {
+  const { root } = await fixture(context);
+  const source = APP_SCRIPT.slice(APP_SCRIPT.indexOf("function sidebarGuidePanel"), APP_SCRIPT.indexOf("function hostedNavigation"))
+    + APP_SCRIPT.slice(APP_SCRIPT.indexOf("function workspaceGuide"), APP_SCRIPT.indexOf("function renderFirstOperatingTasks"));
+  const panel = (workspace) => vm.runInNewContext(source + "\nsidebarGuidePanel()", {
+    state: { workspace }, esc: String, HOSTED_AUTOMATION: { compactMessage: "Promo" }, hostedNavigation: () => "https://autopilot.example"
+  });
+  const guided = panel({ guideTitle: "How we work", guideMessage: "Read this first.", guideHref: "#/help/how-we-work" });
+  assert.match(guided, /How we work/);
+  assert.match(guided, /href="#\/help\/how-we-work"/);
+  assert.doesNotMatch(guided, /autopilot/i);
+  assert.match(panel({}), /Autopilot/);
+  assert.match(panel({ guideHref: "javascript:alert(1)" }), /Autopilot/);
+  const workspace = (await loadWorkspace(root)).entries.find(({ record }) => record.type === "workspace");
+  await writeFile(workspace.path, json({ ...workspace.record, guideTitle: "How we work", guideMessage: "Read this first.", guideHref: "#/help/how-we-work" }));
+  const validation = await captureCli(runCli, ["validate", "--root", root]);
+  assert.equal(validation.exitCode, 0, validation.stdout + validation.stderr);
 });

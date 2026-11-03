@@ -727,6 +727,21 @@
           "type": "string",
           "label": "Sidebar subtitle",
           "description": "Optional line under the sidebar name. Defaults to SOC 2 workspace."
+        },
+        "guideTitle": {
+          "type": "string",
+          "label": "Guide title",
+          "description": "Optional title of the workspace's own how-to guide, shown in the sidebar and on the overview."
+        },
+        "guideMessage": {
+          "type": "string",
+          "label": "Guide summary",
+          "description": "Optional one or two sentences shown with the guide link."
+        },
+        "guideHref": {
+          "type": "string",
+          "label": "Guide link",
+          "description": "Optional link to the guide: an app route such as #/help/how-we-work, a path on this site, or an https URL. When set, the guide replaces the hosted Autopilot promotion."
         }
       },
       "listFields": [

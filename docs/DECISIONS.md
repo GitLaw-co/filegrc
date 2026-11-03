@@ -9,3 +9,4 @@
 - 2026-11-01 Nick: Yes - build it as written. Read-only Markdown help pages from faq/ at /faq behind the existing sign-in.
 - 2026-11-03 Nick: Yes - hosted Actions page with Approve, Feedback and Reject; decisions and change suggestions go to a separate branch, never main. Also: Suggest a change on record and list pages, one-line list filter toolbar, configurable sidebar brand.
 - 2026-11-03 Nick: Basecoat over Primer, plain Tailwind or shadcn for the web UI restyle - FileGRC renders HTML as JS strings with one stylesheet, no React and no build step. Vendor the prebuilt CSS, no CDN; visual restyle only.
+- 2026-11-03 Nick: The site must look like one product - no dark sidebar or dark banners beside the light pages, Actions and Help inside the app, the actions waiting on you on the overview, and a workspace's own guide in place of the app.filegrc.com Autopilot link.
