@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { commitAuthorEnvironment, runGitCommand } from "./git.js";
@@ -29,6 +29,13 @@ const DECISION_ID = /^[0-9]{8}T[0-9]{9}Z-[a-f0-9]{6}$/;
 const MAX_NOTE_LENGTH = 4000;
 const REFRESH_MS = 30_000;
 const PUSH_ATTEMPTS = 3;
+const MAX_QUEUED_WRITES = 20;
+const PROTECTED_BRANCH_NAMES = new Set(["main", "master", "trunk", "develop"]);
+
+// Ties an Approve to the exact suggested answer the owner read.
+export function answerRevision(answer) {
+  return createHash("sha256").update(String(answer ?? "")).digest("hex").slice(0, 16);
+}
 
 export function actionDecisionsBranchFromEnv(env = process.env) {
   return String(env[ACTION_DECISIONS_BRANCH_ENV] ?? "").trim() || undefined;
@@ -150,18 +157,36 @@ export function createActionRegister(input, options = {}) {
   const root = resolveWorkspaceRoot(input);
   const branch = String(options.decisionsBranch ?? DEFAULT_ACTION_DECISIONS_BRANCH).trim();
   if (!isSafeBranchName(branch)) throw new Error(`The action decisions branch "${branch}" is not a safe Git branch name.`);
+  if (PROTECTED_BRANCH_NAMES.has(branch.toLowerCase())) {
+    throw new Error(`Action decisions cannot go to "${branch}". Choose a separate branch such as ${DEFAULT_ACTION_DECISIONS_BRANCH}.`);
+  }
   const now = options.now ?? (() => new Date());
   const refreshMs = options.refreshMs ?? REFRESH_MS;
   const blobCache = new Map();
   let lastFetchAt = 0;
   let writes = Promise.resolve();
+  let queued = 0;
+  let refreshing = null;
+
+  // Writes and fetches of the decisions branch run one at a time, so a fetch can
+  // never rewind the tracking ref past a decision that was just pushed.
+  function exclusive(task, { limit = false } = {}) {
+    if (limit && queued >= MAX_QUEUED_WRITES) {
+      return Promise.reject(requestError(429, "Too many changes are being saved right now. Try again in a minute."));
+    }
+    queued += 1;
+    const run = writes.then(task).finally(() => { queued -= 1; });
+    writes = run.catch(() => undefined);
+    return run;
+  }
 
   async function repository() {
     const loaded = await loadWorkspace(root);
     const renderer = loaded.resources.find(({ type, id }) => type === "renderer-settings" && id === "renderer-settings");
     const remote = String(renderer?.repositoryRemote || "origin").trim();
     if (!isSafeBranchName(remote)) throw new Error("The configured repository remote is not a safe Git name.");
-    if (renderer?.authoritativeBranch && renderer.authoritativeBranch === branch) {
+    const checkedOut = await runGitCommand(root, ["symbolic-ref", "--short", "-q", "HEAD"], { operation: "find the checked-out branch" }).catch(() => "");
+    if ([renderer?.authoritativeBranch, checkedOut].some((name) => name && String(name).toLowerCase() === branch.toLowerCase())) {
       throw new Error("Action decisions must go to a branch other than the authoritative branch.");
     }
     return { loaded, remote, trackingRef: `refs/remotes/${remote}/${branch}` };
@@ -216,9 +241,12 @@ export function createActionRegister(input, options = {}) {
     if (!register.exists) return { ...register, decisions: [] };
     const { loaded, remote, trackingRef } = await repository();
     const problems = [...register.problems];
-    if (Date.now() - lastFetchAt >= refreshMs) {
-      await fetchBranch(remote, trackingRef).catch(() => {
+    if (refreshing || Date.now() - lastFetchAt >= refreshMs) {
+      if (!refreshing) {
         lastFetchAt = Date.now();
+        refreshing = exclusive(() => fetchBranch(remote, trackingRef)).finally(() => { refreshing = null; });
+      }
+      await refreshing.catch(() => {
         problems.push("Recent decisions could not be loaded, so some may be missing from this page.");
       });
     }
@@ -227,13 +255,11 @@ export function createActionRegister(input, options = {}) {
     return { exists: true, actions: applyPendingDecisions(register.actions, decisions), problems, decisions, people };
   }
 
-  async function decide({ actionId, outcome, note, viewer }) {
-    const run = writes.then(() => decideNow({ actionId, outcome, note, viewer }));
-    writes = run.catch(() => undefined);
-    return run;
+  async function decide(request) {
+    return exclusive(() => decideNow(request), { limit: true });
   }
 
-  async function decideNow({ actionId, outcome, note, viewer }) {
+  async function decideNow({ actionId, outcome, note, viewer, answerRevision: seenAnswer }) {
     if (!DECISION_OUTCOMES.includes(outcome)) throw requestError(400, "The decision must be approve, feedback or reject.");
     const text = String(note ?? "").replace(/\r\n?/g, "\n").trim();
     if (outcome !== "approved" && !text) {
@@ -249,6 +275,12 @@ export function createActionRegister(input, options = {}) {
     if (!current) throw requestError(404, "That action was not found in the register.");
     if (!DECIDABLE.has(current.status)) throw requestError(409, `${current.id} is already ${current.status}; it no longer needs a decision.`);
     if (!canDecideAction(current, viewer)) throw requestError(403, "Only the action's owner or an admin can decide on it.");
+    if (outcome === "approved" && !String(current.suggestedAnswer ?? "").trim()) {
+      throw requestError(400, `${current.id} has no suggested answer to approve. Send feedback instead.`);
+    }
+    if (outcome === "approved" && seenAnswer !== answerRevision(current.suggestedAnswer)) {
+      throw requestError(409, `The suggested answer for ${current.id} changed after you opened the page. Read it again before approving.`);
+    }
     const decidedAt = now();
     const on = decidedAt.toISOString();
     const id = `${on.replace(/[-:.]/g, "")}-${randomBytes(3).toString("hex")}`;
@@ -271,7 +303,7 @@ export function createActionRegister(input, options = {}) {
       path,
       content: `${JSON.stringify(decision, null, 2)}\n`,
       message: `${verb} ${current.id}: ${current.title || current.id}`,
-      author: { name: viewer.name || viewer.email, email: viewer.email }
+      author: commitAuthor(viewer)
     });
     return { decision, path, commit, branch };
   }
@@ -279,10 +311,8 @@ export function createActionRegister(input, options = {}) {
   // Anyone signed in may suggest a change to a record or a collection. The
   // suggestion is saved next to decisions as `actions/suggestions/<id>.json`; the
   // register's maintainer turns it into an action with a proposed change.
-  async function suggest({ recordType, recordId, text, viewer }) {
-    const run = writes.then(() => suggestNow({ recordType, recordId, text, viewer }));
-    writes = run.catch(() => undefined);
-    return run;
+  async function suggest(request) {
+    return exclusive(() => suggestNow(request), { limit: true });
   }
 
   async function suggestNow({ recordType, recordId, text, viewer }) {
@@ -320,7 +350,7 @@ export function createActionRegister(input, options = {}) {
       path,
       content: `${JSON.stringify(suggestion, null, 2)}\n`,
       message: `Suggest a change to ${suggestion.recordTitle}`,
-      author: { name: viewer.name || viewer.email, email: viewer.email }
+      author: commitAuthor(viewer)
     });
     return { suggestion, path, commit, branch };
   }
@@ -355,7 +385,7 @@ export function createActionRegister(input, options = {}) {
             operation: "save the decision", timeoutMs: 30_000
           });
         } catch (error) {
-          if (attempt >= PUSH_ATTEMPTS || !/rejected|fetch first|non-fast-forward/i.test(error.message)) throw error;
+          if (attempt >= PUSH_ATTEMPTS || !/non-fast-forward|fetch first|stale info/i.test(error.message)) throw error;
           await fetchBranch(remote, trackingRef);
           continue;
         }
@@ -368,6 +398,12 @@ export function createActionRegister(input, options = {}) {
   }
 
   return { branch, view, decide, suggest };
+}
+
+// The Person's name when Git accepts it as an author name, else their email.
+function commitAuthor(viewer) {
+  const name = String(viewer.name ?? "").trim();
+  return { name: name && !/[<>\u0000-\u001f\u007f]/.test(name) ? name : viewer.email, email: viewer.email };
 }
 
 function requestError(status, message) {
