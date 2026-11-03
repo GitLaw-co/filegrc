@@ -92,6 +92,7 @@ import {
 } from "./workflow.js";
 import { scaffoldNonmaterialAmendment, saveNonmaterialAmendment } from "./nonmaterial-amendments.js";
 import { loadWorkspace } from "./workspace.js";
+import { THEMED_APP_SCRIPT, THEMED_APP_STYLES } from "./theme.js";
 import { APP_SCRIPT, APP_STYLES, renderAcknowledgementsPage, renderActionsPage, renderAuditorLinksPage, renderHelpIndexPage, renderHelpMissingPage, renderHelpPage, renderIndex } from "./web.js";
 import { assertWorkspaceEngineVersion } from "./runtime-version.js";
 
@@ -960,8 +961,8 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       }
       if (request.method === "GET" && url.pathname === "/favicon.png") return text(response, 200, FAVICON_PNG, "image/png");
       if (request.method === "GET" && url.pathname === "/logo-mark-white.png") return text(response, 200, LOGO_MARK_PNG, "image/png");
-      if (request.method === "GET" && url.pathname === "/filegrc-app.js") return text(response, 200, APP_SCRIPT, "text/javascript; charset=utf-8");
-      if (request.method === "GET" && url.pathname === "/filegrc.css") return text(response, 200, APP_STYLES, "text/css; charset=utf-8");
+      if (request.method === "GET" && url.pathname === "/filegrc-app.js") return text(response, 200, THEMED_APP_SCRIPT, "text/javascript; charset=utf-8");
+      if (request.method === "GET" && url.pathname === "/filegrc.css") return text(response, 200, THEMED_APP_STYLES, "text/css; charset=utf-8");
       if (request.method === "GET" && url.pathname.startsWith("/packet/")) {
         const segments = url.pathname.slice("/packet/".length).split("/").map(decodeURIComponent);
         if (

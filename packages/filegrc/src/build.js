@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import { resolveWorkspacePath, resolveWorkspaceRoot } from "./paths.js";
 import { createAppState } from "./state.js";
-import { APP_SCRIPT, APP_STYLES, renderIndex } from "./web.js";
+import { THEMED_APP_SCRIPT, THEMED_APP_STYLES } from "./theme.js";
+import { renderIndex } from "./web.js";
 
 export async function buildWorkspace(input = process.cwd(), options = {}) {
   const root = resolveWorkspaceRoot(input);
@@ -22,8 +23,8 @@ export async function buildWorkspace(input = process.cwd(), options = {}) {
     writeFile(paths.html, renderIndex(state), "utf8"),
     writeFile(paths.favicon, FAVICON_PNG),
     writeFile(paths.logoMark, LOGO_MARK_PNG),
-    writeFile(paths.script, APP_SCRIPT, "utf8"),
-    writeFile(paths.styles, APP_STYLES, "utf8")
+    writeFile(paths.script, THEMED_APP_SCRIPT, "utf8"),
+    writeFile(paths.styles, THEMED_APP_STYLES, "utf8")
   ]);
   return { output, state };
 }
