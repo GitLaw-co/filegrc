@@ -179,7 +179,7 @@ export function renderHelpPage({ title, source }, { fragment = false } = {}) {
   const base = fragment ? "#/help" : "/faq";
   const html = renderMarkdown(source);
   const body = `<nav class="breadcrumbs"><a href="${base}">Help</a><span>/</span><span>${escapeHtml(title)}</span></nav>
-    <article class="panel markdown help-article">${fragment ? html.replace(/href="\/faq\/?/g, 'href="#/help/') : html}</article>`;
+    <article class="panel markdown help-article">${html}</article>`;
   return fragment ? body : helpDocument(title, body);
 }
 
@@ -199,7 +199,8 @@ const ACTION_STATUS_LABELS = {
 const ACTION_OUTCOME_LABELS = { approved: "Approved", feedback: "Feedback", rejected: "Rejected" };
 
 // Hosted mode's action register page. Filters are a plain GET form and each
-// decision is a plain POST form, so the page works without JavaScript.
+// decision is a plain POST form. The app shows the page at #/actions and wires those
+// forms to fetch; a POST without JavaScript still gets a full page back.
 export function renderActionsPage({ viewer = null, exists = true, people = [], allActions = [], actions = [], filters = {}, problems = [], decided = null, error = null, fragment = false }) {
   // As a fragment the page lives in the app shell at #/actions, so its links stay there.
   const base = fragment ? "#/actions" : "/actions";
@@ -953,6 +954,9 @@ function renderServerPage(main, route, url, init) {
         location.href = "/auth/login";
         return null;
       }
+      if (!/text\/html/i.test(response.headers.get("content-type") || "")) {
+        return { url: null, landed: "", html: '<p class="panel dialog-error" role="alert">This page could not load (' + esc(String(response.status)) + '). Reload and try again.</p>' };
+      }
       return { url, landed: response.url, html: await response.text() };
     })
     .catch(() => ({ url: null, landed: "", html: '<p class="panel dialog-error" role="alert">This page could not load. Check your connection and try again.</p>' }))
@@ -963,6 +967,8 @@ function renderServerPage(main, route, url, init) {
       if (route.name === "actions" && landed.pathname === "/actions") {
         const query = new URLSearchParams(landed.search);
         query.delete("fragment");
+        query.delete("decided");
+        query.delete("outcome");
         const hash = "#/actions" + (query.size ? "?" + query.toString() : "");
         page.url = "/actions?" + withFragment(query);
         if (location.hash !== hash) history.replaceState(null, "", hash);
@@ -982,6 +988,16 @@ function renderServerPage(main, route, url, init) {
 function paintServerPage(main, route, page) {
   main.innerHTML = '<div class="page server-page">' + page.html + '</div>';
   if (route.name === "actions") wireActionsPage(main, route);
+  // In-page links in a help article (#section) scroll instead of changing the app route.
+  if (route.name === "help") {
+    main.querySelector(".help-article")?.addEventListener("click", (event) => {
+      const link = event.target.closest('a[href^="#"]');
+      const id = link?.getAttribute("href").slice(1);
+      if (!id || id.startsWith("/")) return;
+      event.preventDefault();
+      main.querySelector("#" + CSS.escape(id))?.scrollIntoView({ block: "start" });
+    });
+  }
 }
 
 function wireActionsPage(main, route) {
@@ -1011,7 +1027,7 @@ function wireActionsPage(main, route) {
       if (event.relatedTarget && !menu.contains(event.relatedTarget)) menu.open = false;
     });
   });
-  main.addEventListener("pointerdown", (event) => close(menus.find((menu) => menu.contains(event.target))));
+  main.querySelector(".action-page")?.addEventListener("pointerdown", (event) => close(menus.find((menu) => menu.contains(event.target))));
 }
 
 function overviewSectionStatus(section, label) {
