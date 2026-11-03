@@ -234,21 +234,25 @@ export function createActionRegister(input, options = {}) {
     return decisions;
   }
 
-  // The register with pending decisions applied. Saved decisions are fetched at
-  // most every `refreshMs`; a failed fetch keeps the last known decisions.
+  // Fetches the branch at most every `refreshMs`, one fetch at a time. Returns
+  // false when the fetch failed and the last known state is all there is.
+  async function refresh(remote, trackingRef) {
+    if (!refreshing && Date.now() - lastFetchAt < refreshMs) return true;
+    if (!refreshing) {
+      lastFetchAt = Date.now();
+      refreshing = exclusive(() => fetchBranch(remote, trackingRef)).finally(() => { refreshing = null; });
+    }
+    return refreshing.then(() => true, () => false);
+  }
+
+  // The register with pending decisions applied; a failed fetch keeps the last known decisions.
   async function view() {
     const register = await loadActionRegister(root);
     if (!register.exists) return { ...register, decisions: [] };
     const { loaded, remote, trackingRef } = await repository();
     const problems = [...register.problems];
-    if (refreshing || Date.now() - lastFetchAt >= refreshMs) {
-      if (!refreshing) {
-        lastFetchAt = Date.now();
-        refreshing = exclusive(() => fetchBranch(remote, trackingRef)).finally(() => { refreshing = null; });
-      }
-      await refreshing.catch(() => {
-        problems.push("Recent decisions could not be loaded, so some may be missing from this page.");
-      });
+    if (!await refresh(remote, trackingRef)) {
+      problems.push("Recent decisions could not be loaded, so some may be missing from this page.");
     }
     const decisions = await readDecisions(trackingRef);
     const people = loaded.resources.filter(({ type }) => type === "person");
@@ -355,6 +359,49 @@ export function createActionRegister(input, options = {}) {
     return { suggestion, path, commit, branch };
   }
 
+  // Saves a prepared record file (such as an Attestation) on the branch instead
+  // of the authoritative branch, for a reviewed change to add to the program.
+  async function saveRecord({ path, record, message, viewer }) {
+    return exclusive(async () => {
+      const { remote, trackingRef } = await repository();
+      await fetchBranch(remote, trackingRef);
+      const commit = await appendFile({
+        remote,
+        trackingRef,
+        path: `${await prefix()}${path}`,
+        content: `${JSON.stringify(record, null, 2)}\n`,
+        message,
+        author: commitAuthor(viewer)
+      });
+      return { commit, branch, path };
+    }, { limit: true });
+  }
+
+  // Records saved on the branch under a workspace directory such as data/attestations.
+  async function savedRecords(directory) {
+    const { remote, trackingRef } = await repository();
+    await refresh(remote, trackingRef);
+    const tip = await runGitCommand(root, ["rev-parse", "--verify", "--quiet", `${trackingRef}^{commit}`], {
+      operation: "find saved records"
+    }).catch(() => "");
+    if (!tip) return [];
+    const base = `${await prefix()}${directory}/`;
+    const listing = await runGitCommand(root, ["ls-tree", "-r", "-z", "--full-tree", tip, "--", base], { operation: "list saved records" });
+    const records = [];
+    for (const line of listing.split("\0").filter(Boolean)) {
+      const match = /^100644 blob ([0-9a-f]{40,64})\t(.+\.json)$/.exec(line);
+      if (!match) continue;
+      if (!blobCache.has(match[1])) {
+        const source = await runGitCommand(root, ["cat-file", "blob", match[1]], { operation: "read a saved record" });
+        let value = null;
+        try { value = JSON.parse(source); } catch { /* skip a file that is not JSON */ }
+        blobCache.set(match[1], value);
+      }
+      if (blobCache.get(match[1])) records.push(blobCache.get(match[1]));
+    }
+    return records;
+  }
+
   // Adds one new file on top of the decisions branch and pushes it, without
   // touching the checked-out branch, its index or its working tree. A rejected
   // push means someone else saved a decision first: fetch and try again.
@@ -397,7 +444,7 @@ export function createActionRegister(input, options = {}) {
     }
   }
 
-  return { branch, view, decide, suggest };
+  return { branch, view, decide, suggest, saveRecord, savedRecords };
 }
 
 // The Person's name when Git accepts it as an author name, else their email.

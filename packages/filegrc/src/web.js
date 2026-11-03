@@ -90,8 +90,10 @@ export function resolveWorkflowDestination(destination, options = {}) {
 
 // Hosted mode's one write page: the signed-in person reads each owed subject
 // and confirms it. The server decides who is attesting; the form names only the subject.
-export function renderAcknowledgementsPage({ person, items = [], done = null, error = null }) {
-  const doneItem = done ? `<p class="panel" role="status">Recorded. Your acknowledgement is committed to the program repository.</p>` : "";
+export function renderAcknowledgementsPage({ person, items = [], done = null, error = null, savedAside = false }) {
+  const doneItem = done ? `<p class="panel" role="status">${savedAside
+    ? "Recorded. Your acknowledgement is saved and is added to the program record at the next review."
+    : "Recorded. Your acknowledgement is committed to the program repository."}</p>` : "";
   const errorItem = error ? `<p class="panel dialog-error" role="alert">${escapeHtml(error)}</p>` : "";
   const sections = items.map((item) => `<section class="panel" aria-labelledby="ack-${escapeHtml(item.subjectId)}">
     <p class="kicker">${item.attestationKind === "training" ? "Training" : "Acknowledgement"}</p>

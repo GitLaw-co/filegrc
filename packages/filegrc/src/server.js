@@ -15,7 +15,7 @@ import { performance } from "node:perf_hooks";
 import { getResourceDefinition } from "../model/index.js";
 import { hostedAutomationForConnection, OPERATING_HOSTED_AUTOMATION } from "./hosted-automation.js";
 import { createHostedAuth, hostedAuthFromEnv, verifySession } from "./hosted-auth.js";
-import { completeOwnAttestation, listOwedAttestations, readResourceContent } from "./resource-mutation.js";
+import { completeOwnAttestation, listOwedAttestations, prepareOwnAttestation, readResourceContent } from "./resource-mutation.js";
 import { prepareAuditWorkspace } from "./audit-preparation.js";
 import { saveAuditPopulation, scaffoldAuditPopulationCorrection } from "./audit-populations.js";
 import { activateDocuments, activateGovernedContent } from "./document-activation.js";
@@ -239,7 +239,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         return await actions(actionRegister, request, response, url, viewer);
       }
       if (attestingPersonId && ["GET", "POST"].includes(request.method)) {
-        return await acknowledgements(input, request, response, url, attestingPersonId, requestOptions);
+        return await acknowledgements(input, request, response, url, attestingPersonId, requestOptions, actionRegister);
       }
       if (request.method === "GET" && url.pathname === "/api/state") {
         if (timingEnabled()) {
@@ -1006,7 +1006,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       }
       json(response, 404, { error: "Not found." });
     } catch (error) {
-      const status = statusFor(error);
+      const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 500 ? error.status : statusFor(error);
       json(response, status, { error: publicErrorMessage(error, status) });
     }
   });
@@ -1020,15 +1020,29 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
 
 // A form post redirects back to the page; a JSON `{ record, content }` post
 // gets the created record. Either way the session names the attesting person.
-async function acknowledgements(input, request, response, url, personId, requestOptions) {
+// Unless the workspace is in trunk mode, where the server commits and pushes the
+// authoritative branch itself, the Attestation is saved on the action decisions
+// branch instead, for a reviewed change to add, and counts as done meanwhile.
+async function acknowledgements(input, request, response, url, personId, requestOptions, register) {
+  const initial = await loadWorkspace(input);
+  const renderer = initial.resources.find(({ type, id }) => type === "renderer-settings" && id === "renderer-settings");
+  const aside = renderer?.repositoryMode !== "trunk";
+  const attestationDirectory = `data/${initial.model.resources.attestation?.collection || "attestations"}`;
+  const pendingSubjects = async () => new Set(aside
+    ? (await register.savedRecords(attestationDirectory))
+      .filter((record) => record?.type === "attestation" && record.personId === personId)
+      .flatMap((record) => record.subjectResourceIds ?? [])
+    : []);
   const page = async (status, extra = {}) => {
     const loaded = await loadWorkspace(input);
-    const items = await Promise.all((await listOwedAttestations(loaded, personId)).map(async (item) => {
+    const pending = await pendingSubjects();
+    const owed = (await listOwedAttestations(loaded, personId)).filter(({ subjectId }) => !pending.has(subjectId));
+    const items = await Promise.all(owed.map(async (item) => {
       const content = await readResourceContent(loaded, loaded.resources.find(({ id }) => id === item.subjectId));
       return { ...item, content: Object.values(content).map(({ source }) => source).join("\n\n") };
     }));
     const person = loaded.resources.find(({ id }) => id === personId);
-    return text(response, status, renderAcknowledgementsPage({ person, items, ...extra }), "text/html; charset=utf-8");
+    return text(response, status, renderAcknowledgementsPage({ person, items, savedAside: aside, ...extra }), "text/html; charset=utf-8");
   };
   if (request.method === "GET") return page(200, { done: url.searchParams.get("done") });
   const asJson = String(request.headers["content-type"] || "").startsWith("application/json");
@@ -1039,6 +1053,22 @@ async function acknowledgements(input, request, response, url, personId, request
     const person = (await loadWorkspace(input)).resources.find(({ id }) => id === personId);
     const author = { name: person?.title, email: person?.email };
     commitAuthorEnvironment(author);
+    if (aside) {
+      const prepared = await prepareOwnAttestation(input, personId, payload);
+      if ((await pendingSubjects()).has(prepared.record.subjectResourceIds[0])) {
+        throw Object.assign(new Error("You have already recorded this acknowledgement."), { status: 409 });
+      }
+      await register.saveRecord({
+        path: prepared.path,
+        record: prepared.record,
+        message: `Record attestation: ${prepared.record.title} (${personId})`,
+        viewer: { personId, name: person?.title, email: String(person?.email ?? "").trim().toLowerCase() }
+      });
+      console.log(`[filegrc audit] ${JSON.stringify({ event: "attestation-saved", personId, path: prepared.path, branch: register.branch })}`);
+      if (asJson) return json(response, 201, { record: prepared.record, path: prepared.path, branch: register.branch });
+      response.writeHead(303, { location: `/acknowledgements?done=${encodeURIComponent(prepared.record.subjectResourceIds[0])}`, "cache-control": "no-store" });
+      return response.end();
+    }
     const result = await browserMutation(input, requestOptions, {
       message: ({ record }) => `Record attestation: ${record.title} (${record.personId})`,
       author,
@@ -1052,7 +1082,7 @@ async function acknowledgements(input, request, response, url, personId, request
     return response.end();
   } catch (error) {
     if (asJson) throw error;
-    const status = statusFor(error);
+    const status = error.status ?? statusFor(error);
     return page(status, { error: publicErrorMessage(error, status) });
   }
 }

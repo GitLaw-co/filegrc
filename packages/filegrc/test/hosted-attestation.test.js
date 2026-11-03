@@ -24,7 +24,7 @@ const git = async (cwd, args) => (await execute("git", args, { cwd })).stdout.tr
 
 // One approved training linked to the HR-02 training Control. Its audience is
 // the internal workforce: the internal worker owes it, the external reviewer does not.
-async function fixture(context) {
+async function fixture(context, { repositoryMode = "trunk" } = {}) {
   const parent = await mkdtemp(join(tmpdir(), "filegrc-hosted-attestation-"));
   const root = join(parent, "workspace");
   const remote = join(parent, "remote.git");
@@ -45,7 +45,7 @@ async function fixture(context) {
   // Trunk mode: browser writes commit to main and push to origin.
   await writeFile(join(root, "data", "renderer.json"), `${JSON.stringify({
     id: "renderer-settings", type: "renderer-settings", title: "Renderer settings", showOnboarding: false,
-    repositoryMode: "trunk", authoritativeBranch: "main", repositoryRemote: "origin"
+    repositoryMode, authoritativeBranch: "main", repositoryRemote: "origin"
   }, null, 2)}\n`);
   await git(root, ["init", "--initial-branch=main"]);
   await git(root, ["config", "user.name", "FileGRC Server"]);
@@ -148,4 +148,40 @@ test("submitting records the session's person, binds the current revision and co
   assert.deepEqual(await listOwedAttestations(root, WORKER), []);
   const validation = await captureCli(runCli, ["validate", "--root", root]);
   assert.equal(validation.exitCode, 0, validation.stdout + validation.stderr);
+});
+
+test("outside trunk mode an acknowledgement is saved on the decisions branch, never on main", async (context) => {
+  const { root, remote, url, as } = await fixture(context, { repositoryMode: "manual" });
+  const mainBefore = await git(remote, ["rev-parse", "main"]);
+  const headBefore = await git(root, ["rev-parse", "HEAD"]);
+  const post = () => fetch(`${url}/acknowledgements`, {
+    method: "POST",
+    redirect: "manual",
+    headers: { cookie: as(WORKER), "content-type": "application/x-www-form-urlencoded", "sec-fetch-site": "same-origin" },
+    body: new URLSearchParams({ subjectResourceId: TRAINING }).toString()
+  });
+  const response = await post();
+  assert.equal(response.status, 303, await response.text());
+  assert.equal(await git(remote, ["rev-parse", "main"]), mainBefore);
+  assert.equal(await git(root, ["rev-parse", "HEAD"]), headBefore);
+  assert.equal(await git(root, ["status", "--porcelain"]), "");
+
+  const files = (await git(remote, ["ls-tree", "-r", "--name-only", "action-decisions"])).split("\n");
+  assert.equal(files.length, 1);
+  assert.match(files[0], /^data\/attestations\/[a-z0-9-]+\.json$/);
+  const record = JSON.parse(await git(remote, ["show", `action-decisions:${files[0]}`]));
+  assert.equal(record.personId, WORKER);
+  assert.deepEqual(record.subjectResourceIds, [TRAINING]);
+  assert.equal(record.attestationMethod, "git-approval");
+  assert.deepEqual(Object.keys(record.contentRevisions), ["training/training-example.md"]);
+  const person = (await loadWorkspace(root)).resources.find(({ id }) => id === WORKER);
+  assert.equal(await git(remote, ["log", "-1", "--format=%an <%ae>", "action-decisions"]), `${person.title} <${person.email}>`);
+
+  // The page counts it as done, and a second submit is refused.
+  const page = await (await fetch(`${url}/acknowledgements?done=${TRAINING}`, { headers: { cookie: as(WORKER) } })).text();
+  assert.match(page, /saved and is added to the program record at the next review/);
+  assert.doesNotMatch(page, new RegExp(`value="${TRAINING}"`));
+  const again = await post();
+  assert.equal(again.status, 409);
+  assert.equal((await git(remote, ["ls-tree", "-r", "--name-only", "action-decisions"])).split("\n").length, 1);
 });
