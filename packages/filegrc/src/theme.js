@@ -258,6 +258,13 @@ body{background:var(--background);color:var(--foreground);font-family:var(--font
 .help-article{padding:24px 28px;max-width:860px}
 @media(max-width:900px){.home-actions-grid{grid-template-columns:1fr}.home-action-stats{grid-template-columns:1fr 1fr 1fr}}
 @media(max-width:520px){.home-action-stats{grid-template-columns:1fr}.home-action-list a{flex-direction:column;align-items:flex-start}}
+/* Actions page: the response choices read as one row of buttons; their radios stay hidden. */
+.bc-input.action-choice{position:absolute;width:1px;height:1px;min-height:0;margin:0;opacity:0;pointer-events:none}
+.action-choice:checked+label{box-shadow:0 0 0 2px var(--background),0 0 0 4px var(--ring)}
+.action-choice:focus-visible+label{outline:2px solid var(--fg-focus);outline-offset:2px}
+.action-response .bc-textarea{min-height:140px;field-sizing:fixed;background:var(--background);font-size:.9rem;line-height:1.5}
+.action-response{background:var(--muted);border-color:var(--border)}
+.action-record li{border-left-color:var(--border)}
 
 /* Hero banners: a plain card, not an inverse block, so every page has one surface colour. */
 .hero,.overview-hero{background:var(--card);color:var(--card-foreground);border:1px solid var(--border);box-shadow:0 1px 2px 0 rgb(0 0 0/.05);min-height:0}
