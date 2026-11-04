@@ -137,9 +137,9 @@ test("signed-in people see their own open actions by default and can filter the 
   assert.match(mine.body, /Policy <code>policies\/access\.md<\/code>/);
   assert.match(mine.body, /aria-current="true">Jordan Lee<\/a>/);
   assert.match(mine.body, /class="filter-chip" href="[^"]*"[^>]*>Owner: Jordan Lee/);
-  assert.match(mine.body, /Status: Waiting for a decision/);
+  assert.match(mine.body, /Status: Waiting on someone/);
   assert.match(mine.body, /2 of 4 actions/);
-  assert.match(mine.body, /P1 · Blocks the period start/);
+  assert.match(mine.body, /<span class="badge">P1<\/span><span class="badge warn">Blocks period start<\/span>/);
 
   const everyone = await page(OWNER, "?owner=&status=all");
   for (const id of ["ACT-001", "ACT-002", "ACT-003", "ACT-004"]) assert.match(everyone.body, new RegExp(`id="${id}"`));
@@ -162,7 +162,7 @@ test("signed-in people see their own open actions by default and can filter the 
   // Buttons only where the viewer may decide.
   assert.match(everyone.body, /name="actionId" value="ACT-001">/);
   assert.doesNotMatch(everyone.body, /name="actionId" value="ACT-002">/);
-  assert.match(everyone.body, /Only Independent Approver or an admin can decide on this action\./);
+  assert.match(everyone.body, /Only Independent Approver or an admin can respond to this action\./);
 });
 
 test("approving saves one decision file on the decisions branch and leaves main alone", async (context) => {
@@ -205,8 +205,8 @@ test("approving saves one decision file on the decisions branch and leaves main 
   const after = await page(OWNER, "?owner=&status=all&decided=ACT-001&outcome=approved");
   assert.match(after.body, /role="status">Approved ACT-001\./);
   const card = after.body.slice(after.body.indexOf('id="ACT-001"'), after.body.indexOf('id="ACT-002"'));
-  assert.match(card, /<dt>Status<\/dt><dd>Accepted<\/dd>/);
-  assert.match(card, /Waiting to be filed in the register/);
+  assert.match(card, /<span class="badge good">Accepted<\/span>/);
+  assert.match(card, /not yet in the register/);
   assert.doesNotMatch(card, /name="decision"/, "a settled action offers no more buttons");
 
   const again = await decide(OWNER, { actionId: "ACT-001", decision: "reject", note: "Changed my mind" });
@@ -222,7 +222,7 @@ test("feedback keeps the action open, reject needs a reason, and each decision i
   const { remote, decide, page } = await fixture(context);
   const empty = await decide(OWNER, { actionId: "ACT-004", decision: "feedback", note: "  " });
   assert.equal(empty.status, 400);
-  assert.match(await empty.text(), /Feedback is required/);
+  assert.match(await empty.text(), /Write your message to the agent/);
   const noReason = await decide(OWNER, { actionId: "ACT-004", decision: "reject" });
   assert.equal(noReason.status, 400);
   assert.equal((await decisionFiles(remote)).length, 0);
@@ -230,8 +230,7 @@ test("feedback keeps the action open, reject needs a reason, and each decision i
   assert.equal((await decide(OWNER, { actionId: "ACT-004", decision: "feedback", note: "Cite the 2026 contract." })).status, 303);
   const open = await page(OWNER);
   const card = open.body.slice(open.body.indexOf('id="ACT-004"'));
-  assert.match(card, /<dt>Status<\/dt><dd>Answer proposed<\/dd>/);
-  assert.match(card, /<strong>Feedback<\/strong> by Jordan Lee on \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC: Cite the 2026 contract\./);
+  assert.match(card, /<strong>Message to the agent<\/strong> · Jordan Lee · \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC · <span class="action-entry-pending">not yet in the register<\/span><div class="action-entry-note">Cite the 2026 contract\.<\/div>/);
   assert.match(card, /name="decision" value="approve"/);
 
   assert.equal((await decide(OWNER, { actionId: "ACT-004", decision: "reject", note: "Out of scope" })).status, 303);
@@ -281,7 +280,36 @@ test("a decision stops showing as pending once the register records it", async (
     status: "proposed",
     history: [{ outcome: saved.outcome, by: saved.by, on: saved.on, note: saved.note }]
   })));
-  assert.doesNotMatch((await page(OWNER)).body, /Add the SOC report\./);
+  const filed = (await page(OWNER)).body;
+  assert.doesNotMatch(filed, /not yet in the register/);
+  assert.match(filed, /<div class="action-entry-note">Add the SOC report\.<\/div>/, "the register's history shows in the card's record");
+});
+
+test("a task is marked done or part done; a decision is approved", async (context) => {
+  const { root, remote, decide, page } = await fixture(context);
+  await writeFile(join(root, "actions", "ACT-004.json"), json(action("ACT-004", { kind: "fix", status: "open" })));
+  const body = (await page(OWNER)).body;
+  const task = body.slice(body.indexOf('id="ACT-004"'));
+  const decision = body.slice(body.indexOf('id="ACT-001"'), body.indexOf('id="ACT-004"'));
+  assert.match(task, /<span class="badge">Task<\/span>/);
+  assert.match(task, /<h3>Steps<\/h3>/);
+  for (const value of ["done", "progress", "feedback", "reject"]) assert.match(task, new RegExp(`name="decision" value="${value}"`));
+  assert.doesNotMatch(task, /name="decision" value="approve"/, "a task has nothing to approve");
+  assert.match(decision, /name="decision" value="approve"/);
+  assert.doesNotMatch(decision, /name="decision" value="(done|progress)"/);
+
+  const noNote = await decide(OWNER, { actionId: "ACT-004", decision: "done", note: " " });
+  assert.equal(noNote.status, 400);
+  assert.match(await noNote.text(), /Say what you did/);
+  assert.equal((await decide(OWNER, { actionId: "ACT-004", decision: "progress", note: "Step 1 done." })).status, 303);
+  assert.match((await page(OWNER)).body, /id="ACT-004"/, "progress keeps the task waiting");
+  assert.equal((await decide(OWNER, { actionId: "ACT-004", decision: "done", note: "All steps done on 4 Nov." })).status, 303);
+  const after = await page(OWNER, "?owner=&status=all&decided=ACT-004&outcome=done");
+  assert.match(after.body, /role="status">Marked as done: ACT-004\./);
+  assert.match(after.body.slice(after.body.indexOf('id="ACT-004"')), /<span class="badge good">Done<\/span>/);
+  assert.doesNotMatch((await page(OWNER)).body, /id="ACT-004"/, "a done task no longer waits");
+  const outcomes = await Promise.all((await decisionFiles(remote)).map(async (file) => JSON.parse(await git(remote, ["show", `${BRANCH}:${file}`])).outcome));
+  assert.deepEqual(outcomes.sort(), ["done", "progress"]);
 });
 
 test("decisions can never be pointed at the authoritative branch", async (context) => {

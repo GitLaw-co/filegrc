@@ -7,7 +7,8 @@ import { loadWorkspace } from "./workspace.js";
 
 // An action register is an optional folder of questions waiting on a person:
 // `actions/<ID>.json`, one file per action, outside `data/`. Hosted mode shows it
-// at /actions and lets the owner (or an admin) approve, send feedback or reject.
+// at /actions and lets the owner (or an admin) respond: approve the suggested
+// answer, mark a task done, record progress, message the agent, or reject.
 //
 // Decisions are never written to the authoritative branch. Each one is a new file
 // `actions/decisions/<ID>/<decision id>.json` committed to a separate branch
@@ -22,7 +23,10 @@ export const ACTION_DECISIONS_BRANCH_ENV = "FILEGRC_ACTION_DECISIONS_BRANCH";
 export const DEFAULT_ACTION_DECISIONS_BRANCH = "action-decisions";
 export const ACTION_STATUSES = ["open", "proposed", "accepted", "rejected", "done", "dropped"];
 export const ACTION_PRIORITIES = ["p1", "p2", "p3"];
-export const DECISION_OUTCOMES = ["approved", "feedback", "rejected"];
+// approved: the suggested answer is accepted. done: the owner did the work.
+// progress: part of the work is done; the action stays open. feedback: a message
+// to the agent, not a statement for the record. rejected: it will not be done.
+export const DECISION_OUTCOMES = ["approved", "done", "progress", "feedback", "rejected"];
 const DECIDABLE = new Set(["open", "proposed"]);
 const ACTION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const DECISION_ID = /^[0-9]{8}T[0-9]{9}Z-[a-f0-9]{6}$/;
@@ -84,8 +88,8 @@ export function isDecisionFolded(action, decision) {
 }
 
 // The register as people should see it now: each action with its pending
-// decisions applied in time order. Approve and reject settle it; feedback leaves
-// the status alone. The file on the authoritative branch is not changed.
+// decisions applied in time order. Approve, done and reject settle it; progress
+// and feedback leave the status alone. The file on the authoritative branch is not changed.
 export function applyPendingDecisions(actions, decisions) {
   const byAction = new Map();
   for (const decision of [...decisions].sort((a, b) => a.on.localeCompare(b.on) || a.id.localeCompare(b.id))) {
@@ -99,6 +103,7 @@ export function applyPendingDecisions(actions, decisions) {
       if (!DECIDABLE.has(view.status)) break;
       view.pendingDecisions.push(decision);
       if (decision.outcome === "approved") view = { ...view, status: "accepted", decision: summary(decision) };
+      if (decision.outcome === "done") view = { ...view, status: "done", decision: summary(decision) };
       if (decision.outcome === "rejected") view = { ...view, status: "rejected", decision: summary(decision) };
     }
     return view;
@@ -287,10 +292,15 @@ export function createActionRegister(input, options = {}) {
   }
 
   async function decideNow({ actionId, outcome, note, viewer, answerRevision: seenAnswer }) {
-    if (!DECISION_OUTCOMES.includes(outcome)) throw requestError(400, "The decision must be approve, feedback or reject.");
+    if (!DECISION_OUTCOMES.includes(outcome)) throw requestError(400, "Choose a response: approve, done, progress, message or reject.");
     const text = String(note ?? "").replace(/\r\n?/g, "\n").trim();
     if (outcome !== "approved" && !text) {
-      throw requestError(400, outcome === "feedback" ? "Feedback is required." : "A reason is required to reject an action.");
+      throw requestError(400, {
+        done: "Say what you did, so the record shows it.",
+        progress: "Say what you have done so far.",
+        feedback: "Write your message to the agent.",
+        rejected: "A reason is required to reject an action."
+      }[outcome]);
     }
     if (text.length > MAX_NOTE_LENGTH) throw requestError(400, `The note must be at most ${MAX_NOTE_LENGTH} characters.`);
     if (!viewer?.personId || !viewer.email) throw requestError(403, "Sign in to decide on an action.");
@@ -303,7 +313,7 @@ export function createActionRegister(input, options = {}) {
     if (!DECIDABLE.has(current.status)) throw requestError(409, `${current.id} is already ${current.status}; it no longer needs a decision.`);
     if (!canDecideAction(current, viewer)) throw requestError(403, "Only the action's owner or an admin can decide on it.");
     if (outcome === "approved" && !String(current.suggestedAnswer ?? "").trim()) {
-      throw requestError(400, `${current.id} has no suggested answer to approve. Send feedback instead.`);
+      throw requestError(400, `${current.id} has no suggested answer to approve. Message the agent instead.`);
     }
     if (outcome === "approved" && seenAnswer !== answerRevision(current.suggestedAnswer)) {
       throw requestError(409, `The suggested answer for ${current.id} changed after you opened the page. Read it again before approving.`);
@@ -323,7 +333,7 @@ export function createActionRegister(input, options = {}) {
       actionStatusBefore: current.status
     };
     const path = `${await prefix()}${ACTION_DECISIONS_DIRECTORY}/${current.id}/${id}.json`;
-    const verb = { approved: "Approve", feedback: "Feedback on", rejected: "Reject" }[outcome];
+    const verb = { approved: "Approve", done: "Done", progress: "Progress on", feedback: "Message on", rejected: "Reject" }[outcome];
     const commit = await appendFile({
       remote,
       trackingRef,

@@ -1163,7 +1163,7 @@ async function actions(register, request, response, url, viewer) {
   }
   if (!viewer) return page(403, { filterParams, error: "Sign in on the hosted site to decide on an action." });
   try {
-    const outcome = { approve: "approved", feedback: "feedback", reject: "rejected" }[form.get("decision")];
+    const outcome = { approve: "approved", done: "done", progress: "progress", feedback: "feedback", reject: "rejected" }[form.get("decision")];
     const result = await register.decide({
       actionId: form.get("actionId"), outcome, note: form.get("note"), answerRevision: form.get("answerRevision"), viewer
     });
