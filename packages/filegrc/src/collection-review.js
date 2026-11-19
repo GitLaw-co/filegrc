@@ -1,7 +1,9 @@
+import { reviewPayloadPath } from "./collection-review-handoff.js";
+import { scheduleReviewPacket, expandedScheduleDecisions } from "./schedule-review-packet.js";
 import { firstOperatingTasks } from "./operating-preparation.js";
 import { resourceIndex } from "./resource-index.js";
 import { scheduleSetIssues, scheduleReviewerConflicts } from "./schedule-set.js";
-import { calculationMemo } from "./calculation-cache.js";
+import { calculationMemo, withAssessmentCache } from "./calculation-cache.js";
 import { readFile } from "node:fs/promises";
 import { modelSupports } from "../model/index.js";
 import {
@@ -32,13 +34,13 @@ export function assessCollectionReviews(input, options = {}) {
     ? input
     : null;
   if (!loaded) throw new Error("Collection review assessment requires a loaded workspace.");
-  return Object.keys(loaded.model.collectionReviews || {})
-    .map((resourceType) => assessCollectionReview(loaded, resourceType, options));
+  return withAssessmentCache(() => Object.keys(loaded.model.collectionReviews || {})
+    .map((resourceType) => assessCollectionReview(loaded, resourceType, options)));
 }
 
 export function assessCollectionReview(loaded, resourceType, options = {}) {
-  return calculationMemo(loaded, "collection-review", [resourceType, options.programId], () =>
-    assessCollectionReviewUncached(loaded, resourceType, options));
+  return withAssessmentCache(() => calculationMemo(loaded, "collection-review", [resourceType, options.programId], () =>
+    assessCollectionReviewUncached(loaded, resourceType, options)));
 }
 
 function assessCollectionReviewUncached(loaded, resourceType, options) {
@@ -149,16 +151,17 @@ function assessCollectionReviewUncached(loaded, resourceType, options) {
   const changesSinceReview = stale
     ? collectionChangesSinceReview(loaded, resourceType, review, program.id)
     : null;
+  const reviewRevision = reviewEntry ? calculateRevision("content", reviewEntry.source) : null;
   return {
     resourceType,
+    programId: program.id,
+    reviewPayloadPath: reviewPayloadPath(loaded.root, program.id, resourceType, currentRevision, reviewRevision),
     configuration,
     records,
     recordCount: records.length,
     ...(resourceType === "retention-schedule-item" ? { retentionApplications: loaded.resources.filter((item) => item.type === "retention-application" && item.status === "active").map((item) => ({ id: item.id, title: item.title, ruleId: item.ruleId, scopeResourceIds: item.scopeResourceIds, reviewedById: item.reviewedById, reviewedOn: item.reviewedOn })) } : {}),
     review,
-    reviewRevision: reviewEntry
-      ? calculateRevision("content", reviewEntry.source)
-      : null,
+    reviewRevision,
     reviewEntries,
     collectionRevision: currentRevision,
     changesSinceReview,
@@ -166,6 +169,7 @@ function assessCollectionReviewUncached(loaded, resourceType, options) {
     status: complete ? "current" : stale ? "stale" : "review-required",
     complete,
     ...(reviewerEligibility || {}),
+    ...(resourceType === "obligation" ? { scheduleReview: scheduleReviewPacket(loaded, program, review, reviewRevision) } : {}),
     ...(recordProposals.length ? { recordProposals, incompleteRecordProposals } : {}),
     ...(approvalIssues.length ? { approvalIssues } : {}),
     message: complete
@@ -192,6 +196,10 @@ export function retentionScheduleIsAuthoritative(loaded, program) {
 }
 
 export async function scaffoldCollectionReview(input = process.cwd(), options = {}) {
+  return withAssessmentCache(() => scaffoldCollectionReviewUncached(input, options));
+}
+
+async function scaffoldCollectionReviewUncached(input, options) {
   const loaded = await loadWorkspace(input);
   const program = resolveProgram(loaded, options.programId);
   const resourceType = requiredType(loaded, options.resourceType);
@@ -218,18 +226,17 @@ export async function scaffoldCollectionReview(input = process.cwd(), options = 
     : null;
   return {
     resourceType,
-    ...(resourceType === "obligation" ? { programId: program.id, firstOperatingTasks: firstOperatingTasks(loaded, program) } : {}),
+    ...(resourceType === "obligation" ? { programId: program.id, ...(options.includeOperatingPreview !== false ? { firstOperatingTasks: firstOperatingTasks(loaded, program) } : {}), scheduleReview: assessment.scheduleReview, confirmUnchangedSchedules: false, expectedPriorReviewRevision: assessment.reviewRevision } : {}),
     ...(resourceType === "obligation" ? { scheduleDecisions: assessment.records.map((record) => ({ obligationId: record.id, disposition: null, ...(record.activeRuleId ? { ruleId: record.activeRuleId } : {}), rationale: null })) } : {}),
     ...(assessment.changesSinceReview ? { changesSinceReview: assessment.changesSinceReview } : {}),
     ...(resourceType === "retention-schedule-item" ? { retentionApplications: assessment.retentionApplications, applicationOversight: "Review current owner applications during periodic independent schedule oversight. These decisions preserve unchanged approved rules and do not create a new approval request for each service." } : {}),
     decision: priorDecisionStillValid ? priorReview.decision : (assessment.records.length
       ? "complete"
       : allowedDecisions.includes("zero-population") ? "zero-population" : null),
-    rationale: priorReview?.rationale || null,
-    reviewedByIds: [...(priorReview?.reviewedByIds || [])],
-    reviewedOn: priorReview?.reviewedOn
-      ? currentCalendarDate(loaded.workspace.timezone, now)
-      : null,
+    rationale: null,
+    ...(priorReview?.status === "active" && priorReview.reviewedOn && priorReview.reviewedByIds?.length && resourceType !== "obligation" ? { priorReview: { id: priorReview.id, rationale: priorReview.rationale, reviewedByIds: priorReview.reviewedByIds, reviewedOn: priorReview.reviewedOn } } : {}),
+    reviewedByIds: [],
+    reviewedOn: null,
     ...(resourceType === "obligation" || resourceType === "retention-schedule-item" && modelSupports(loaded.model, "retention-schedule-approval")
       ? { expectedCollectionRevision: assessment.collectionRevision }
       : {}),
@@ -240,6 +247,10 @@ export async function scaffoldCollectionReview(input = process.cwd(), options = 
 }
 
 export async function planCollectionReview(input = process.cwd(), options = {}) {
+  return withAssessmentCache(() => planCollectionReviewUncached(input, options));
+}
+
+async function planCollectionReviewUncached(input, options) {
   const loaded = await loadWorkspace(input);
   const program = resolveProgram(loaded, options.programId);
   const resourceType = requiredType(loaded, options.resourceType);
@@ -253,10 +264,21 @@ export async function planCollectionReview(input = process.cwd(), options = {}) 
   if (resourceType === "retention-schedule-item" && modelSupports(loaded.model, "retention-schedule-approval") && !options.expectedCollectionRevision) {
     throw new Error("Data Retention Schedule approval requires the displayed collection revision. Reload or scaffold the current review before approving it.");
   }
+  let reaffirmedScheduleDecisions = 0;
   if (resourceType === "obligation") {
     if (!options.expectedCollectionRevision) throw new Error("Schedule-set approval requires the displayed exact collection revision.");
+    const explicitIds = new Set((Array.isArray(options.scheduleDecisions) ? options.scheduleDecisions : [])
+      .filter((decision) => decision?.disposition).map(({ obligationId }) => obligationId));
+    options = { ...options, scheduleDecisions: expandedScheduleDecisions(loaded, program, assessment, options) };
+    reaffirmedScheduleDecisions = options.confirmUnchangedSchedules === true && Array.isArray(options.scheduleDecisions)
+      ? options.scheduleDecisions.filter((decision) => !explicitIds.has(decision?.obligationId)).length : 0;
     const issues = scheduleSetIssues(loaded, program, { scopeResourceIds: [program.id], scheduleDecisions: options.scheduleDecisions });
-    if (issues.length) throw new Error(issues[0].message);
+    if (issues.length) {
+      const compactHint = options.confirmUnchangedSchedules !== true && assessment.scheduleReview.counts.unchanged > 0
+        && Array.isArray(options.scheduleDecisions) && options.scheduleDecisions.length < assessment.records.length
+        ? " This compact review omits unchanged rows. After reviewing them, set confirmUnchangedSchedules to true and retain expectedPriorReviewRevision and expectedCollectionRevision, or supply an explicit decision for every schedule." : "";
+      throw new Error(issues[0].message + compactHint);
+    }
     if (!(options.reviewedByIds || []).length || options.reviewedByIds.some((id) => !assessment.eligibleReviewerIds.includes(id))) throw new Error("Schedule-set approval needs an independent active Person who does not own the selected Controls or schedules.");
   }
   await requireControlReviewReady(loaded, resourceType, program.id);
@@ -433,7 +455,12 @@ export async function planCollectionReview(input = process.cwd(), options = {}) 
   }
   return {
     operation: "collection-review",
-    ...(resourceType === "obligation" ? { firstOperatingTasks: firstOperatingTasks(loaded, program) } : {}),
+    reviewSummary: { programId: program.id, priorReviewId: assessment.review?.id || null, expectedPriorReviewRevision: assessment.reviewRevision,
+      expectedCollectionRevision: currentRevision, populationCount: assessment.records.length,
+      ...(resourceType === "obligation" ? { decisionCounts: { ...assessment.scheduleReview.counts,
+        reaffirmed: reaffirmedScheduleDecisions,
+        explicit: record.scheduleDecisions.length - reaffirmedScheduleDecisions } } : {}) },
+    ...(resourceType === "obligation" && options.includeOperatingPreview !== false ? { firstOperatingTasks: firstOperatingTasks(loaded, program) } : {}),
     resourceType,
     assessment,
     changes: {
