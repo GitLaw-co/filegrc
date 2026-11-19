@@ -63,7 +63,7 @@ export async function planCollection(input, name, options = {}, env = process.en
         status: "collected",
         artifactKind: "configuration-export",
         sourceKind: "component",
-        sourceComponentId: options.component,
+        sourceComponentId: check.sourceComponentId || options.component,
         sourceDescription: run.sourceDescription,
         sourceResourceIds: [checkId],
         controlIds: check.controlIds,

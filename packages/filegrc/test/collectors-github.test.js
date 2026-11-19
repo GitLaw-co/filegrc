@@ -110,3 +110,12 @@ test("collect github without a token exits non-zero with a plain message and wri
   assert.deepEqual(requests, []);
   assert.deepEqual(await dataSnapshot(root), before);
 });
+
+test("collect github names an existing check's own source Component on its results", async (context) => {
+  const { args } = await setup(context);
+  await execute([...args("--apply"), "--json"]);
+  const other = args("--preview").map((arg) => (arg === "component-example" ? "component-other" : arg));
+  const rerun = JSON.parse((await execute([...other, "--json"])).stdout);
+  assert.deepEqual(rerun.checks, []);
+  assert.deepEqual(rerun.evidence.map(({ record }) => record.sourceComponentId), ["component-example", "component-example"]);
+});
