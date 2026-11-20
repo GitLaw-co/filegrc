@@ -892,8 +892,7 @@
         "title",
         "status",
         "jobTitle",
-        "department"
-      ],
+        "department", "startDate", "endDate"],
       "formFields": [
         "statusTransition"
       ]
