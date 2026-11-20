@@ -7,6 +7,11 @@ const DEVICES_SCOPE = "https://www.googleapis.com/auth/cloud-identity.devices.re
 const USERS_PATH = "/admin/directory/v1/users";
 const DEVICES_PATH = "/v1/devices";
 const HINT = "Check that --admin names a Workspace administrator and that the service account has domain-wide delegation for the directory read-only scope.";
+// Cloud Identity deviceType values for phones and mobile sync. The encryption,
+// screen lock and OS checks cover laptops and desktops only: phones never report
+// encryptionState, and those checks name the staff laptops Component. Any other
+// type, unknown ones included, stays in scope.
+const MOBILE_TYPES = new Set(["IOS", "ANDROID", "GOOGLE_SYNC"]);
 const DEVICES_HINT = "Check that --admin names a Workspace administrator and that the service account has domain-wide delegation for the directory and Cloud Identity devices read-only scopes.";
 
 // Lists Google Workspace users with a service account that acts for --admin
@@ -113,14 +118,17 @@ async function deviceRuns(baseUrl, accessToken, { sinceDays, minMacos, minWindow
       userStates(device, "managementState"), device.lastSyncTime, userStates(device, "firstSyncTime")].map(cell).join(" | ")} |`)
   ] : [];
 
-  const unencrypted = devices.filter((device) => device.encryptionState !== "ENCRYPTED").map((device) => device.encryptionState === "NOT_ENCRYPTED"
+  const laptops = devices.filter((device) => !MOBILE_TYPES.has(device.deviceType));
+  const mobile = devices.filter((device) => MOBILE_TYPES.has(device.deviceType)).map((device) => `- ${device.label}: not in scope (mobile)`);
+  const unencrypted = laptops.filter((device) => device.encryptionState !== "ENCRYPTED").map((device) => device.encryptionState === "NOT_ENCRYPTED"
     ? `- ${device.label}: not encrypted` : `- ${device.label}: not reported (${device.encryptionState || "no encryptionState"})`);
-  const unlocked = devices.filter((device) => !device.users.some((user) => user.passwordState === "PASSWORD_SET"))
+  const unlocked = laptops.filter((device) => !device.users.some((user) => user.passwordState === "PASSWORD_SET"))
     .map((device) => `- ${device.label}: no device user with passwordState PASSWORD_SET`);
   const ownerless = devices.filter((device) => !device.owner).map((device) => `- ${device.label}: no device user with an email`);
+  const outOfScope = `\n\n- not in scope (mobile): ${mobile.length}${block(mobile)}`;
   const outdated = [];
   const unchecked = [];
-  for (const device of devices) {
+  for (const device of laptops) {
     const version = device.osVersion || "OS version not reported";
     if (device.deviceType === "MAC_OS") {
       if (!(Number(/\d+/.exec(device.osVersion || "")?.[0]) >= minMacos)) outdated.push(`- ${device.label}: ${version}, below macOS ${minMacos}`);
@@ -129,13 +137,14 @@ async function deviceRuns(baseUrl, accessToken, { sinceDays, minMacos, minWindow
     } else unchecked.push(`- ${device.label}: not checked`);
   }
 
-  // With no kept device every check fails: no laptop evidence is the gap.
-  const check = (key, title, expectedCondition, fields, failures, extra = "") => ({
+  // With no kept device every check fails: no laptop evidence is the gap. The
+  // laptop checks also fail when only mobile devices are kept.
+  const check = (key, title, expectedCondition, fields, failures, extra = "", scope = devices) => ({
     key,
     title,
     expectedCondition,
     sourceDescription: `${source}, fields ${fields}; devices synced in the last ${sinceDays} days, one per serial number.`,
-    result: devices.length && !failures.length ? "passed" : "failed",
+    result: scope.length && !failures.length ? "passed" : "failed",
     observed: `${counts}\n- failing: ${failures.length}${block(failures)}${extra}`
   });
   return [{
@@ -146,13 +155,15 @@ async function deviceRuns(baseUrl, accessToken, { sinceDays, minMacos, minWindow
     result: devices.length ? "passed" : "failed",
     observed: `${counts}${block(table)}`
   },
-  check("workspace-device-encryption", "Every Google Workspace endpoint device reports disk encryption",
-    "Every recently synced endpoint device has encryptionState ENCRYPTED.", "encryptionState", unencrypted),
-  check("workspace-device-screen-lock", "Every Google Workspace endpoint device has a screen lock password",
-    "Every recently synced endpoint device has a device user with passwordState PASSWORD_SET.", "passwordState", unlocked),
-  check("workspace-device-os-supported", "Every Google Workspace endpoint device runs a supported OS version",
-    `Every recently synced macOS device runs macOS ${minMacos} or later and every Windows device runs build ${minWindowsBuild} or later.`,
-    "deviceType and osVersion", outdated, `\n\n- not checked (not macOS or Windows): ${unchecked.length}${block(unchecked)}`),
+  check("workspace-device-encryption", "Every Google Workspace laptop and desktop reports disk encryption",
+    "Every recently synced laptop or desktop has encryptionState ENCRYPTED. Phones and tablets are not in scope.", "deviceType and encryptionState",
+    unencrypted, outOfScope, laptops),
+  check("workspace-device-screen-lock", "Every Google Workspace laptop and desktop has a screen lock password",
+    "Every recently synced laptop or desktop has a device user with passwordState PASSWORD_SET. Phones and tablets are not in scope.",
+    "deviceType and passwordState", unlocked, outOfScope, laptops),
+  check("workspace-device-os-supported", "Every Google Workspace laptop and desktop runs a supported OS version",
+    `Every recently synced macOS device runs macOS ${minMacos} or later and every Windows device runs build ${minWindowsBuild} or later. Phones and tablets are not in scope.`,
+    "deviceType and osVersion", outdated, `\n\n- not checked (not macOS or Windows): ${unchecked.length}${block(unchecked)}${outOfScope}`, laptops),
   check("workspace-device-owner", "Every Google Workspace endpoint device names its owner",
     "Every recently synced endpoint device has a device user with an email address.", "device user userEmail", ownerless)];
 }
