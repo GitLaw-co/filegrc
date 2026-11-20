@@ -167,6 +167,36 @@ test("all-encrypted devices pass encryption, and a Windows build below --min-win
   assert.match(runs["workspace-device-os-supported"].text, /^- ben@example\.com \(WINDOWS, Laptop\): Windows 10\.0\.22631, below Windows build 26100$/m);
 });
 
+test("phones are left out of the encryption, screen lock and OS checks and listed as not in scope; the inventory and owner checks keep them", async (context) => {
+  const iphone = device("iphone", { deviceType: "IOS", osVersion: "iOS 27.0.1", serialNumber: "SERIAL-IPHONE", model: "iPhone 15", encryptionState: undefined });
+  const android = device("android", { deviceType: "ANDROID", osVersion: "Android 13", serialNumber: "SERIAL-ANDROID", model: "Pixel 6", encryptionState: undefined });
+  const { preview } = await setup(context, {
+    pages: [[...PAGES[0], iphone, android]],
+    deviceUsers: { ...DEVICE_USERS, iphone: [owner("ana")], android: [owner("x", { userEmail: undefined, passwordState: "PASSWORD_NOT_SET" })] }
+  });
+  const runs = await preview();
+  for (const key of ["encryption", "screen-lock", "os-supported"]) {
+    const run = runs[`workspace-device-${key}`];
+    assert.equal(run.result, "passed", key);
+    assert.match(run.text, /^- failing: 0$/m, key);
+    assert.match(run.text, /- not in scope \(mobile\): 2\n\n- ana@example\.com \(IOS, iPhone 15\): not in scope \(mobile\)\n- no owner email \(ANDROID, Pixel 6\): not in scope \(mobile\)/, key);
+  }
+  assert.match(runs["workspace-device-os-supported"].text, /- not checked \(not macOS or Windows\): 0\n/);
+  assert.equal(runs["workspace-device-inventory"].result, "passed");
+  assert.match(runs["workspace-device-inventory"].text, /^- kept: 4$/m);
+  assert.equal(runs["workspace-device-owner"].result, "failed");
+  assert.match(runs["workspace-device-owner"].text, /^- no owner email \(ANDROID, Pixel 6\): no device user with an email$/m);
+});
+
+test("with only phones synced the encryption, screen lock and OS checks fail for lack of laptop evidence", async (context) => {
+  const iphone = device("iphone", { deviceType: "IOS", osVersion: "iOS 27.0.1", serialNumber: "SERIAL-IPHONE", model: "iPhone 15" });
+  const { preview } = await setup(context, { pages: [[iphone]], deviceUsers: { iphone: [owner("ana")] } });
+  const runs = await preview();
+  assert.equal(runs["workspace-device-inventory"].result, "passed");
+  assert.equal(runs["workspace-device-owner"].result, "passed");
+  for (const key of ["encryption", "screen-lock", "os-supported"]) assert.equal(runs[`workspace-device-${key}`].result, "failed", key);
+});
+
 test("with no recently synced device the inventory and every device check fail", async (context) => {
   const { preview } = await setup(context, { pages: [[PAGES[1][2]]] });
   const runs = await preview();
