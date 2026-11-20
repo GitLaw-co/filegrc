@@ -113,7 +113,7 @@ export function renderAcknowledgementsPage({ person, items = [], done = null, er
   <title>My acknowledgements · FileGRC</title>
   <link rel="stylesheet" href="./filegrc.css">
 </head>
-<body>
+<body class="standalone-page">
   <main id="main" class="page">
     <div class="page-intro"><div>
       <p class="kicker">${escapeHtml(person?.title || "Signed in")}</p>
