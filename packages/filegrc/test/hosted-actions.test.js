@@ -72,7 +72,7 @@ async function fixture(context, { adminEmails } = {}) {
   await writeFile(join(root, "actions", "schema.json"), json({ type: "object" }));
   await writeFile(join(root, "actions", "ACT-001.json"), json(action("ACT-001", { priority: "p1", blocksPeriodStart: true })));
   await writeFile(join(root, "actions", "ACT-002.json"), json(action("ACT-002", { ownerId: OTHER, title: "Other <script>x</script>" })));
-  await writeFile(join(root, "actions", "ACT-003.json"), json(action("ACT-003", { status: "done", suggestedAnswer: "" })));
+  await writeFile(join(root, "actions", "ACT-003.json"), json(action("ACT-003", { status: "done", suggestedAnswer: "", kind: "approval" })));
   await writeFile(join(root, "actions", "ACT-004.json"), json(action("ACT-004", {
     evidence: [{ label: "Unsafe", url: "javascript:alert(1)" }]
   })));
@@ -158,6 +158,16 @@ test("signed-in people see their own open actions by default and can filter the 
   assert.match(search.body, /id="ACT-004"/);
   assert.doesNotMatch(search.body, /id="ACT-001"/);
   assert.match(search.body, /Search: act-004/);
+  assert.match(search.body, /<details class="panel action-card" id="ACT-004" open>/, "a single match opens");
+  assert.doesNotMatch(everyone.body, /<details class="panel action-card" id="[^"]+" open>/, "a list starts closed");
+  assert.match(everyone.body, /aria-label="Filter by type"/);
+  const signoffs = await page(OWNER, "?owner=&status=all&type=approval");
+  assert.match(signoffs.body, /id="ACT-003"/);
+  assert.doesNotMatch(signoffs.body, /id="ACT-001"/);
+  assert.match(signoffs.body, /Type: Sign-off /);
+  const byLabel = await page(OWNER, "?q=sign-off&owner=&status=all");
+  assert.match(byLabel.body, /id="ACT-003"/);
+  assert.doesNotMatch(byLabel.body, /id="ACT-001"/);
 
   // Buttons only where the viewer may decide.
   assert.match(everyone.body, /name="actionId" value="ACT-001">/);
@@ -345,8 +355,13 @@ test("pending decisions apply in time order and the register's own decision wins
   const [closed] = applyPendingDecisions([{ ...base, status: "done" }], [decision("20261103T120000000Z-bbbbbb", "rejected", "2026-11-03T12:00:00.000Z")]);
   assert.equal(closed.status, "done");
 
-  assert.deepEqual(actionFilters(new URLSearchParams(), OWNER), { q: "", owner: OWNER, status: "waiting", priority: "", blocks: "" });
-  assert.deepEqual(actionFilters(new URLSearchParams("owner=&status=bogus&priority=p9"), OWNER), { q: "", owner: "", status: "waiting", priority: "", blocks: "" });
+  assert.deepEqual(actionFilters(new URLSearchParams(), OWNER), { q: "", owner: OWNER, status: "waiting", priority: "", type: "", blocks: "" });
+  assert.deepEqual(actionFilters(new URLSearchParams("owner=&status=bogus&priority=p9&type=bogus"), OWNER), { q: "", owner: "", status: "waiting", priority: "", type: "", blocks: "" });
+  assert.equal(actionFilters(new URLSearchParams("type=approval"), OWNER).type, "approval");
+  const kinds = [action("T", { kind: "fix" }), action("D", { kind: "decision" }), action("S", { kind: "approval" }), action("U", { kind: undefined })];
+  assert.deepEqual(filterActions(kinds, { status: "all", type: "fix" }).map(({ id }) => id), ["T"]);
+  assert.deepEqual(filterActions(kinds, { status: "all", type: "decision" }).map(({ id }) => id).sort(), ["D", "U"]);
+  assert.deepEqual(filterActions(kinds, { status: "all", q: "sign-off" }).map(({ id }) => id), ["S"]);
   const sorted = filterActions([action("B", { priority: "p2" }), action("A", { priority: "p1", due: "2026-12-01" }), action("C", { priority: "p1", due: "2026-11-15" })], { owner: "", status: "all" });
   assert.deepEqual(sorted.map(({ id }) => id), ["C", "A", "B"]);
 });

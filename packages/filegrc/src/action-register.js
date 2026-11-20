@@ -23,6 +23,19 @@ export const ACTION_DECISIONS_BRANCH_ENV = "FILEGRC_ACTION_DECISIONS_BRANCH";
 export const DEFAULT_ACTION_DECISIONS_BRANCH = "action-decisions";
 export const ACTION_STATUSES = ["open", "proposed", "accepted", "rejected", "done", "dropped"];
 export const ACTION_PRIORITIES = ["p1", "p2", "p3"];
+// The label each kind of action shows on the Actions page. An action without a
+// known kind reads as a decision.
+export const ACTION_KIND_LABELS = {
+  fix: "Task",
+  external: "Task outside GitLaw",
+  decision: "Decision",
+  approval: "Sign-off",
+  information: "Information needed"
+};
+export const ACTION_FILTER_KEYS = ["q", "owner", "status", "priority", "type", "blocks"];
+export function actionKind(action) {
+  return Object.hasOwn(ACTION_KIND_LABELS, action?.kind) ? action.kind : "decision";
+}
 // approved: the suggested answer is accepted. done: the owner did the work.
 // progress: part of the work is done; the action stays open. feedback: a message
 // to the agent, not a statement for the record. rejected: it will not be done.
@@ -117,17 +130,18 @@ function summary({ outcome, by, on, note }) {
 // Filters from the query string. With none of them present, a signed-in person
 // sees their own actions that wait for a decision.
 export function actionFilters(searchParams, viewerPersonId = null) {
-  const keys = ["q", "owner", "status", "priority", "blocks"];
-  const given = keys.some((key) => searchParams.has(key));
+  const given = ACTION_FILTER_KEYS.some((key) => searchParams.has(key));
   const value = (key) => String(searchParams.get(key) ?? "").trim();
-  if (!given) return { q: "", owner: viewerPersonId || "", status: "waiting", priority: "", blocks: "" };
+  if (!given) return { q: "", owner: viewerPersonId || "", status: "waiting", priority: "", type: "", blocks: "" };
   const status = value("status");
   const priority = value("priority");
+  const type = value("type");
   return {
     q: value("q").slice(0, 200),
     owner: value("owner"),
     status: status === "all" || status === "waiting" || ACTION_STATUSES.includes(status) ? status : "waiting",
     priority: ACTION_PRIORITIES.includes(priority) ? priority : "",
+    type: Object.hasOwn(ACTION_KIND_LABELS, type) ? type : "",
     blocks: value("blocks") === "yes" ? "yes" : ""
   };
 }
@@ -135,11 +149,12 @@ export function actionFilters(searchParams, viewerPersonId = null) {
 export function filterActions(actions, filters) {
   const query = String(filters.q ?? "").toLowerCase();
   return actions.filter((action) => (
-    (!query || [action.id, action.title, action.question, action.suggestedAnswer].some((text) => String(text ?? "").toLowerCase().includes(query)))
+    (!query || [action.id, action.title, action.question, action.suggestedAnswer, ACTION_KIND_LABELS[actionKind(action)]].some((text) => String(text ?? "").toLowerCase().includes(query)))
     && (!filters.owner || action.ownerId === filters.owner)
     && (filters.status === "all" || !filters.status
       || (filters.status === "waiting" ? DECIDABLE.has(action.status) : action.status === filters.status))
     && (!filters.priority || action.priority === filters.priority)
+    && (!filters.type || actionKind(action) === filters.type)
     && (!filters.blocks || action.blocksPeriodStart === true)
   )).sort((a, b) => (
     rank(a.priority, ACTION_PRIORITIES) - rank(b.priority, ACTION_PRIORITIES)
