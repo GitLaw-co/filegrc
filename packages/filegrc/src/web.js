@@ -15,6 +15,7 @@ import { HOSTED_AUTOMATION, OPERATING_HOSTED_AUTOMATION } from "./hosted-automat
 import { PROGRAM_PATH, programPathForModel, RESOURCE_INSTRUCTIONS, RESOURCE_OUTPUTS, RESOURCE_PAGE_SUMMARIES } from "./program-path.js";
 import { formatCalendarDate, formatLocalDateTime } from "./time.js";
 import { escapeHtml, renderMarkdown } from "./markdown.js";
+import { ACTION_FILTER_KEYS, ACTION_KIND_LABELS } from "./action-register.js";
 
 export function dashboardProgramReadiness(programReadiness = {}) {
   const progress = programReadiness.progress || {};
@@ -207,7 +208,7 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
   const personName = (id) => people.find((person) => person.id === id)?.title || id || "Nobody";
   const ownerIds = [...new Set(allActions.map(({ ownerId }) => ownerId).filter(Boolean))]
     .sort((a, b) => personName(a).localeCompare(personName(b)));
-  const keys = ["q", "owner", "status", "priority", "blocks"];
+  const keys = ACTION_FILTER_KEYS;
   const hidden = keys.map((key) => `<input type="hidden" name="${key}" value="${escapeHtml(filters[key] ?? "")}">`).join("");
   const href = (changes) => {
     const next = new URLSearchParams();
@@ -219,6 +220,7 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
     { key: "owner", label: "Owner", options: [["", "Any"], ...ownerIds.map((id) => [id, personName(id)])], name: personName },
     { key: "status", label: "Status", options: [["all", "Any"], ["waiting", "Waiting on someone"], ...Object.entries(ACTION_STATUS_LABELS)], name: statusLabel, inactive: "all" },
     { key: "priority", label: "Priority", options: [["", "Any"], ...["p1", "p2", "p3"].map((value) => [value, value.toUpperCase()])], name: (value) => value.toUpperCase() },
+    { key: "type", label: "Type", options: [["", "Any"], ...Object.entries(ACTION_KIND_LABELS)], name: (value) => ACTION_KIND_LABELS[value] || value },
     { key: "blocks", label: "Blocks period start", options: [["", "Any"], ["yes", "Yes"]], name: () => "Yes" }
   ];
   const menu = ({ key, label, options, inactive = "" }) => `<details class="filter-menu${(filters[key] ?? "") !== inactive ? " active" : ""}"><summary aria-label="Filter by ${escapeHtml(label.toLowerCase())}">${escapeHtml(label)}<span class="filter-caret" aria-hidden="true">▾</span></summary>
@@ -238,7 +240,7 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
   const decidedNotice = decided?.actionId
     ? `<p class="panel action-saved" role="status">${escapeHtml({ approved: "Approved", done: "Marked as done:", progress: "Progress saved for", feedback: "Message sent to the agent for", rejected: "Rejected" }[decided.outcome] || "Saved")} ${escapeHtml(decided.actionId)}. ${escapeHtml({ approved: "When the agent next files responses, it carries it out and opens a pull request for you to merge.", done: "It goes into the register when someone next asks the agent to file responses.", progress: "The action stays open for the remaining steps.", feedback: "The agent answers by updating the action when someone next asks it to file responses.", rejected: "The reason goes into the register when someone next asks the agent to file responses." }[decided.outcome] || "")}</p>`
     : "";
-  const cards = actions.map((action, index) => actionCard(action, { personName, hidden, viewer, open: index === 0 || action.id === decided?.actionId })).join("\n");
+  const cards = actions.map((action) => actionCard(action, { personName, hidden, viewer, open: actions.length === 1 || action.id === decided?.actionId })).join("\n");
   const intro = viewer
     ? `Work that needs a person. Open one to see what to do. A task: do the steps, then mark it done. A decision: approve the suggested answer or message the agent to change it. You can respond to actions you own${viewer.isAdmin ? ", and to any action as an admin" : ""}.`
     : "Work that needs a person. Sign in on the hosted site to respond to one.";
@@ -292,11 +294,11 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
 // How each kind of action reads and what its owner can do with it. A task is work
 // the owner does, so it is marked done; a decision, sign-off or answer is approved.
 const ACTION_KINDS = {
-  fix: { label: "Task", lead: "What needs fixing", answer: "Steps", primary: "done" },
-  external: { label: "Task outside GitLaw", lead: "What needs doing", answer: "Steps", primary: "done" },
-  decision: { label: "Decision", lead: "Question", answer: "Suggested answer", primary: "approve" },
-  approval: { label: "Sign-off", lead: "What needs your sign-off", answer: "What you are signing off", primary: "approve", approveHelp: "You agree with what you are signing off. When the agent next files responses, it records your sign-off and opens a pull request for you to merge." },
-  information: { label: "Information needed", lead: "What we need to know", answer: "Suggested answer", primary: "approve", approveHelp: "The suggested answer is correct. If it is wrong, message the agent with the right answer instead; it updates the action for you to approve." }
+  fix: { label: ACTION_KIND_LABELS.fix, lead: "What needs fixing", answer: "Steps", primary: "done" },
+  external: { label: ACTION_KIND_LABELS.external, lead: "What needs doing", answer: "Steps", primary: "done" },
+  decision: { label: ACTION_KIND_LABELS.decision, lead: "Question", answer: "Suggested answer", primary: "approve" },
+  approval: { label: ACTION_KIND_LABELS.approval, lead: "What needs your sign-off", answer: "What you are signing off", primary: "approve", approveHelp: "You agree with what you are signing off. When the agent next files responses, it records your sign-off and opens a pull request for you to merge." },
+  information: { label: ACTION_KIND_LABELS.information, lead: "What we need to know", answer: "Suggested answer", primary: "approve", approveHelp: "The suggested answer is correct. If it is wrong, message the agent with the right answer instead; it updates the action for you to approve." }
 };
 const ACTION_RESPONSES = {
   approve: { button: "Approve", submit: "Approve", help: "The suggested answer is right. When the agent next files responses, it carries it out and opens a pull request for you to merge.", optional: "Anything to add for the audit record? (optional)" },

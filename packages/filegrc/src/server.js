@@ -24,7 +24,7 @@ import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
 import { auditorLinkSecretFromEnv, createAuditorView } from "./auditor-view.js";
-import { actionDecisionsBranchFromEnv, actionFilters, answerRevision, canDecideAction, createActionRegister, filterActions, summarizeActions } from "./action-register.js";
+import { ACTION_FILTER_KEYS, actionDecisionsBranchFromEnv, actionFilters, answerRevision, canDecideAction, createActionRegister, filterActions, summarizeActions } from "./action-register.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -1158,7 +1158,7 @@ async function actions(register, request, response, url, viewer) {
   const form = new URLSearchParams(await readForm(request));
   fragment ||= form.has("fragment");
   const filterParams = new URLSearchParams();
-  for (const key of ["q", "owner", "status", "priority", "blocks"]) {
+  for (const key of ACTION_FILTER_KEYS) {
     if (form.has(key)) filterParams.set(key, form.get(key));
   }
   if (!viewer) return page(403, { filterParams, error: "Sign in on the hosted site to decide on an action." });
