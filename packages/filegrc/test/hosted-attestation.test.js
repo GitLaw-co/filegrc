@@ -94,6 +94,8 @@ test("the acknowledgements page lists owed training for its audience only", asyn
   const page = await worker.text();
   assert.match(page, /Security Awareness Training/);
   assert.match(page, new RegExp(`name="subjectResourceId" value="${TRAINING}"`));
+  // The app shell locks html/body scrolling; a standalone page must opt out or long content cannot be read.
+  assert.match(page, /<body class="standalone-page">/);
 
   const outsider = await (await fetch(`${url}/acknowledgements`, { headers: { cookie: as(OUTSIDER) } })).text();
   assert.doesNotMatch(outsider, /Security Awareness Training/);
