@@ -1,3 +1,4 @@
+import { appName } from "./app-name.js";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { loadWorkspace } from "./workspace.js";
 
@@ -203,5 +204,5 @@ function pageHeaders() {
 
 // Messages are fixed strings or the configured domain, never request input.
 function page(title, message) {
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>${title} · FileGRC</title><h1>${title}</h1><p>${message}</p><p><a href="/auth/login">Sign in with Google</a></p></html>\n`;
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>${title} · ${appName().replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)}</title><h1>${title}</h1><p>${message}</p><p><a href="/auth/login">Sign in with Google</a></p></html>\n`;
 }

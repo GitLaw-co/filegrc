@@ -450,7 +450,7 @@ test("routes semantic reconciliation actions to a focused browser workflow", () 
   assert.match(APP_SCRIPT, /candidateId: candidate\.transitionFingerprint/);
   assert.match(APP_SCRIPT, /Confirm and add work/);
   assert.match(APP_SCRIPT, /Dismiss false positive/);
-  assert.match(APP_SCRIPT, /Open this workspace in the local writable renderer or use the CLI to confirm or dismiss this transition/);
+  assert.match(APP_SCRIPT, /This site is read-only. To confirm or dismiss this change/);
   assert.match(APP_SCRIPT, /localFetch\("\/api\/reconciliation"/);
   assert.match(APP_SCRIPT, /if \(route\.name === "detail"\) sections\.add\("workflow"\)/);
 });
