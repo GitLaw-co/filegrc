@@ -377,7 +377,7 @@ test("the sidebar links to Actions when the register exists and shows the worksp
   assert.equal(navigation({ actionsHref: "/actions", helpHref: "/faq" }, { name: "actions" }), '<a class="help-nav" href="#/help">Help</a>|<div class="sidebar-primary-nav"><a class="current" href="#/actions"><span>Actions</span><span class="sidebar-action-count" aria-label="3 waiting for your decision">3</span></a></div>');
   assert.equal(navigation({}), "|");
 
-  assert.ok(APP_SCRIPT.includes('esc(state.workspace.brandName || "FileGRC")'));
+  assert.ok(APP_SCRIPT.includes('esc(state.workspace.brandName || document.body.dataset.appName || "FileGRC")'));
   assert.ok(APP_SCRIPT.includes('esc(state.workspace.brandSubtitle || "SOC 2 workspace")'));
   const workspace = (await loadWorkspace(root)).entries.find(({ record }) => record.type === "workspace");
   await writeFile(workspace.path, json({ ...workspace.record, brandName: "Example", brandSubtitle: "SOC 2 portal" }));
