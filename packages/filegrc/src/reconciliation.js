@@ -22,29 +22,29 @@ const TRANSITIONS = {
       applies: (before, after) => after?.status === "active"
         && after?.affiliation !== "external"
         && before?.status !== "active",
-      message: "Confirm whether activating this Person represents a workforce start that needs policy-event work."
+      message: "This person's record was switched to active. If they have just joined, confirm to add their joiner tasks (policy sign-off, training, access). If they were already working here, dismiss it."
     },
     {
       eventType: "person-ended",
       applies: (before, after) => before?.status === "active" && after?.status !== "active",
-      message: "Confirm whether this Person status change represents a departure that needs access and asset work."
+      message: "This person's record is no longer active. If they have left, confirm to add their leaver tasks (remove access, return equipment). If not, dismiss it."
     },
     {
       eventType: "person-role-changed",
       applies: (before, after) => before && after && before.jobTitle !== after.jobTitle,
-      message: "Confirm whether this job-title change represents a role change that needs access and training work."
+      message: "This person's job title changed. If their role changed, confirm to add tasks to review their access and training. If the title was only corrected, dismiss it."
     }
   ],
   vendor: [
     {
       eventType: "vendor-activated",
       applies: (before, after) => after?.status === "active" && before?.status !== "active",
-      message: "Confirm whether activating this Vendor needs onboarding, assurance, and access work."
+      message: "This vendor was marked active. If you have started using them, confirm to add onboarding tasks (security review, contract, access). If not, dismiss it."
     },
     {
       eventType: "vendor-terminated",
       applies: (before, after) => before?.status === "active" && ["inactive", "terminated"].includes(after?.status),
-      message: "Confirm whether this Vendor status change needs termination, access, and data-return work."
+      message: "This vendor is no longer active. If you have stopped using them, confirm to add offboarding tasks (remove access, get your data back). If not, dismiss it."
     }
   ],
   system: [{
@@ -52,12 +52,12 @@ const TRANSITIONS = {
     applies: (before, after) => before && after && materialFieldsChanged(before, after, [
       "boundary", "criticality", "classificationId", "internetExposed", "vendorIds", "ownerIds"
     ]),
-    message: "Confirm whether this System change is material and needs the configured change workflow."
+    message: "Something important about this system changed: its boundary, owner, criticality, vendors or internet exposure. If the change is real, confirm to add the change-review tasks. If it was only a correction, dismiss it."
   }],
   incident: [{
     eventType: "incident-closed",
     applies: (before, after) => before && after && before.status !== "closed" && after.status === "closed",
-    message: "Confirm whether closing this Incident needs lessons-learned, disclosure, or remediation work."
+    message: "This incident was closed. Confirm to add the follow-up tasks (lessons learned, notifying customers, fixes). Dismiss it if none are needed."
   }],
   policy: [{
     eventType: "policy-revised",
@@ -70,34 +70,34 @@ const TRANSITIONS = {
       || materialFieldsChanged(before, after, ["status", "effectiveOn", "ownerIds", "approverIds"])
       )
     ),
-    message: "Confirm whether this Policy revision is material and needs reapproval, training, or acknowledgement work."
+    message: "This policy's text or approval details changed. If the change matters, confirm to add re-approval, training and sign-off tasks. If it was only a typo or formatting fix, dismiss it."
   }],
   exception: [{
     eventType: "exception-expired",
     applies: (before, after) => before && after && before.status !== "expired" && after.status === "expired",
-    message: "Confirm whether this Exception expiry needs compensating-control review or remediation work."
+    message: "This exception has expired. Confirm to add tasks to review the control or fix the gap. Dismiss it if nothing is needed."
   }],
   "service-account": [
     {
       eventType: "service-account-created",
       applies: (before, after) => after?.status === "active" && before?.status !== "active",
-      message: "Confirm whether activating this Service Account needs authorization and review work."
+      message: "This service account was marked active. If it is new, confirm to add tasks to approve and review its access. If not, dismiss it."
     },
     {
       eventType: "service-account-expired",
       applies: (before, after) => before?.status === "active" && ["expired", "disabled"].includes(after?.status),
-      message: "Confirm whether this Service Account status change needs disablement and access-review work."
+      message: "This service account is no longer active. If that is a real change, confirm to add tasks to disable it and check its access. If not, dismiss it."
     }
   ],
   vulnerability: [{
     eventType: "vulnerability-confirmed",
     applies: (before, after) => after?.confirmedOn && before?.confirmedOn !== after.confirmedOn,
-    message: "Confirm whether this newly confirmed Vulnerability needs remediation and tracking work."
+    message: "A vulnerability was confirmed. Confirm to add tasks to fix and track it. Dismiss it if it needs no work."
   }],
   asset: [{
     eventType: "asset-disposed",
     applies: (before, after) => before && after && before.status !== "disposed" && after.status === "disposed",
-    message: "Confirm whether this Asset disposal needs sanitization and evidence work."
+    message: "This device or asset was marked disposed. Confirm to add tasks to wipe it and record the evidence. Dismiss it if that is already done."
   }]
 };
 const MAX_RECONCILIATION_HISTORY_BYTES = 32 * 1024 * 1024;

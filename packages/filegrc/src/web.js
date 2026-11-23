@@ -1,3 +1,4 @@
+import { appName } from "./app-name.js";
 import { installedVersion } from "./runtime-version.js";
 import { createResourceId } from "./id.js";
 import { selectDefaultAudit } from "./audit-selection.js";
@@ -110,7 +111,7 @@ export function renderAcknowledgementsPage({ person, items = [], done = null, er
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>My acknowledgements · FileGRC</title>
+  <title>My acknowledgements · ${escapeHtml(appName())}</title>
   <link rel="stylesheet" href="./filegrc.css">
 </head>
 <body class="standalone-page">
@@ -152,7 +153,7 @@ export function renderAuditorLinksPage({ admin = null, link = null, values = {},
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Auditor links · FileGRC</title>
+  <title>Auditor links · ${escapeHtml(appName())}</title>
   <link rel="stylesheet" href="/filegrc.css">
 </head>
 <body>
@@ -263,7 +264,7 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Actions · FileGRC</title>
+  <title>Actions · ${escapeHtml(appName())}</title>
   <link rel="stylesheet" href="/filegrc.css">
 </head>
 <body class="standalone-page">
@@ -389,7 +390,7 @@ function helpDocument(title, body) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>${escapeHtml(title)} · FileGRC</title>
+  <title>${escapeHtml(title)} · ${escapeHtml(appName())}</title>
   <link rel="stylesheet" href="/filegrc.css">
 </head>
 <body>
@@ -411,11 +412,11 @@ export function renderIndex(state = null, { helpHref = null, actionsHref = null,
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>FileGRC</title>
+  <title>${escapeHtml(appName())}</title>
   <link rel="icon" type="image/png" href="./favicon.png">
   <link rel="stylesheet" href="./filegrc.css">
 </head>
-<body${helpHref ? ` data-help-href="${escapeHtml(helpHref)}"` : ""}${actionsHref ? ` data-actions-href="${escapeHtml(actionsHref)}"` : ""}${suggestHref ? ` data-suggest-href="${escapeHtml(suggestHref)}"` : ""}>
+<body data-app-name="${escapeHtml(appName())}"${helpHref ? ` data-help-href="${escapeHtml(helpHref)}"` : ""}${actionsHref ? ` data-actions-href="${escapeHtml(actionsHref)}"` : ""}${suggestHref ? ` data-suggest-href="${escapeHtml(suggestHref)}"` : ""}>
   <a class="skip-link" href="#main">Skip to content</a>
   <div id="app"><div class="loading" role="status" aria-live="polite" aria-busy="true"><span class="spinner" aria-hidden="true"></span><span>Loading workspace…</span></div></div>
   ${snapshot}
@@ -742,7 +743,7 @@ function buildNavigation(route) {
   const organizationCurrent = route.name === "organization" || route.name === "repository" || ["workspace", "renderer-settings"].includes(route.type);
   const organizationName = state.workspace.organizationName || "Organization";
   const initial = organizationName.trim().charAt(0).toUpperCase() || "O";
-  return '<aside class="sidebar" id="sidebar-navigation"><button class="nav-close" type="button" aria-label="Close navigation">×</button><a href="#/" class="brand"' + (route.name === "home" ? ' aria-current="page"' : "") + '><img class="mark" src="./logo-mark-white.png" alt="" width="39" height="39"><span><strong>' + esc(state.workspace.brandName || "FileGRC") + '</strong><small>' + esc(state.workspace.brandSubtitle || "SOC 2 workspace") + '</small></span></a><label class="search mobile-sidebar-search"><span aria-hidden="true">⌕</span><input data-global-search type="search" placeholder="Search records" aria-label="Search records"></label><nav class="sidebar-nav">' + primaryNavigation(route) + stages + '</nav>' + sidebarGuidePanel() + '<div class="sidebar-footer">' + helpNavigation(route) + '<a class="organization-nav ' + (organizationCurrent ? "current" : "") + '" href="#/organization"><span class="organization-mark">' + esc(initial) + '</span><span><strong>' + esc(organizationName) + '</strong><small>Organization</small></span><span class="organization-arrow">›</span></a></div></aside><button class="nav-scrim" type="button" aria-label="Close navigation"></button>';
+  return '<aside class="sidebar" id="sidebar-navigation"><button class="nav-close" type="button" aria-label="Close navigation">×</button><a href="#/" class="brand"' + (route.name === "home" ? ' aria-current="page"' : "") + '><img class="mark" src="./logo-mark-white.png" alt="" width="39" height="39"><span><strong>' + esc(state.workspace.brandName || document.body.dataset.appName || "FileGRC") + '</strong><small>' + esc(state.workspace.brandSubtitle || "SOC 2 workspace") + '</small></span></a><label class="search mobile-sidebar-search"><span aria-hidden="true">⌕</span><input data-global-search type="search" placeholder="Search records" aria-label="Search records"></label><nav class="sidebar-nav">' + primaryNavigation(route) + stages + '</nav>' + sidebarGuidePanel() + '<div class="sidebar-footer">' + helpNavigation(route) + '<a class="organization-nav ' + (organizationCurrent ? "current" : "") + '" href="#/organization"><span class="organization-mark">' + esc(initial) + '</span><span><strong>' + esc(organizationName) + '</strong><small>Organization</small></span><span class="organization-arrow">›</span></a></div></aside><button class="nav-scrim" type="button" aria-label="Close navigation"></button>';
 }
 
 function readinessStageForRoute(route) {
@@ -818,7 +819,7 @@ function topbar(route) {
             ? "Data Retention Schedule"
             : route.name === "list" && route.type === "document"
               ? documentListTitle(route.params)
-              : state.model.resources[route.type]?.pluralTitle || "FileGRC";
+              : state.model.resources[route.type]?.pluralTitle || document.body.dataset.appName || "FileGRC";
   const repositoryLoading = state.sections?.repository !== "complete";
   const repositoryError = state.sections?.repository === "error";
   const repositoryLabel = repositoryError
@@ -3570,7 +3571,7 @@ function openObligationEventDialog(trigger) {
   const needsTimestamp = trigger.steps.some((step) => step.window?.precision === "timestamp");
   const eventField = needsTimestamp
     ? '<label><span>Event time <small>your local time</small></span><input name="occurredAt" type="datetime-local" required value="' + esc(currentLocalDateTime()) + '"></label>'
-    : '<label><span>Event date</span><input name="occurredOn" type="date" required value="' + esc(currentDate()) + '"></label>';
+    : '<label><span>When it happened</span><input name="occurredOn" type="date" required value="' + esc(currentDate()) + '"></label>';
   const riskField = trigger.eventType === "person-ended"
     ? '<label><span>Departure risk</span><select name="riskLevel" required><option value="normal">Normal</option><option value="high">High or involuntary</option></select></label>'
     : "";
@@ -3579,7 +3580,7 @@ function openObligationEventDialog(trigger) {
   dialog.setAttribute("aria-labelledby", "event-dialog-title");
   dialog.innerHTML = '<form><div class="dialog-head"><div><p class="kicker">Policy event</p><h2 id="event-dialog-title">' + esc(policyEventName(trigger.eventType)) + '</h2></div><button type="button" class="icon-button" aria-label="Close">×</button></div><p>This creates one event record and adds the matching linked tasks to the Work Queue.</p>' + eventField + riskField +
     (subjects.length ? '<label><span>Subject <small>required</small></span><select name="subject" required><option value="">Select</option>' + subjects.map(({ record }) => '<option value="' + esc(record.id) + '">' + esc(record.title) + ' · ' + esc(state.model.resources[record.type].title) + '</option>').join("") + '</select></label>' : "") +
-    '<label><span>Workflow name <small>optional</small></span><input name="title" maxlength="200" placeholder="' + esc(policyEventName(trigger.eventType)) + '"></label><div class="event-dialog-steps">' + trigger.steps.map((step) => '<div data-risk-levels="' + esc((step.eventRiskLevels || []).join(",")) + '" ' + ((step.eventRiskLevels || []).length ? "hidden" : "") + '><strong>' + esc(step.title) + '</strong><small>' + esc(eventStepSummary(step)) + '</small></div>').join("") + '</div><div class="dialog-error" role="alert"></div><div class="dialog-actions"><button type="button" class="button" data-event="cancel">Cancel</button><button type="submit" class="button primary">Add Tasks to Work Queue</button></div></form>';
+    '<label><span>Task list name <small>optional</small></span><input name="title" maxlength="200" placeholder="' + esc(policyEventName(trigger.eventType)) + '"></label><div class="event-dialog-steps">' + trigger.steps.map((step) => '<div data-risk-levels="' + esc((step.eventRiskLevels || []).join(",")) + '" ' + ((step.eventRiskLevels || []).length ? "hidden" : "") + '><strong>' + esc(step.title) + '</strong><small>' + esc(eventStepSummary(step)) + '</small></div>').join("") + '</div><div class="dialog-error" role="alert"></div><div class="dialog-actions"><button type="button" class="button" data-event="cancel">Cancel</button><button type="submit" class="button primary">Add Tasks to Work Queue</button></div></form>';
   document.body.append(dialog);
   dialog.showModal();
   dialog.querySelector(".icon-button").addEventListener("click", () => dialog.close());
@@ -5146,7 +5147,7 @@ function reconciliationPanel() {
   const candidates = state.reconciliation?.candidates || [];
   if (!candidates.length) return "";
   const items = candidates.map((candidate) => '<article class="reconciliation-candidate"><div><span class="badge warn">Review</span><strong>' + esc(titleCase(candidate.eventType)) + '</strong><p>' + esc(candidate.message) + '</p><small><code>' + esc(candidate.sourcePath) + '</code> · fingerprint <code>' + esc(candidate.transitionFingerprint) + '</code></small></div><div class="reconciliation-actions"><button class="button" type="button" data-dismiss-reconciliation="' + esc(candidate.transitionFingerprint) + '" ' + (state.readOnly ? 'disabled title="Writes are not available in this repository state"' : "") + '>Dismiss false positive</button><code>' + esc(candidate.action.command) + '</code></div></article>').join("");
-  return '<section class="panel span-2 reconciliation-panel"><div class="panel-head"><div><p class="kicker">Git transition review</p><h3>Transitions Need Confirmation</h3></div><span class="badge warn">' + candidates.length + '</span></div><p>Confirm real events with the shown command. Dismiss only when the exact Git change does not represent a real event.</p><div class="reconciliation-candidates">' + items + '</div></section>';
+  return '<section class="panel span-2 reconciliation-panel"><div class="panel-head"><div><p class="kicker">Changes to check</p><h3>Records That May Need Follow-up</h3></div><span class="badge warn">' + candidates.length + '</span></div><p>These records changed in a way that may need follow-up work. Confirm the real ones to add their tasks. Dismiss the rest, for example a record that was only being set up or corrected.</p><div class="reconciliation-candidates">' + items + '</div></section>';
 }
 
 function bindReconciliationDismissals(main) {
@@ -5161,7 +5162,7 @@ function openReconciliationDismissal(candidate) {
   const dialog = document.createElement("dialog");
   dialog.className = "commit-dialog event-dialog";
   dialog.setAttribute("aria-labelledby", "reconciliation-dismissal-title");
-  dialog.innerHTML = '<form><div class="dialog-head"><div><p class="kicker">False-positive review</p><h2 id="reconciliation-dismissal-title">Dismiss ' + esc(titleCase(candidate.eventType)) + '</h2></div><button type="button" class="icon-button" aria-label="Close">×</button></div><p>This decision applies only to fingerprint <code>' + esc(candidate.transitionFingerprint) + '</code>. A later change creates a new candidate.</p><label><span>Reviewer</span><select name="reviewedById" required><option value="">Select a Person</option>' + people.map(({ record }) => '<option value="' + esc(record.id) + '">' + esc(record.title) + '</option>').join("") + '</select></label><label><span>Reviewed on</span><input name="reviewedOn" type="date" required value="' + esc(currentDate()) + '"></label><label><span>Rationale</span><textarea name="rationale" rows="4" required placeholder="Explain why this Git change does not represent a real event."></textarea></label><div class="dialog-error" role="alert"></div><div class="save-status" role="status" aria-live="polite"></div><div class="dialog-actions"><button type="button" class="button" data-dismiss-dialog>Cancel</button><button type="submit" class="button primary" id="save-reconciliation-dismissal">Record dismissal</button></div></form>';
+  dialog.innerHTML = '<form><div class="dialog-head"><div><p class="kicker">Not a real change</p><h2 id="reconciliation-dismissal-title">Dismiss ' + esc(titleCase(candidate.eventType)) + '</h2></div><button type="button" class="icon-button" aria-label="Close">×</button></div><p>This decision applies only to fingerprint <code>' + esc(candidate.transitionFingerprint) + '</code>. A later change creates a new candidate.</p><label><span>Reviewer</span><select name="reviewedById" required><option value="">Select a Person</option>' + people.map(({ record }) => '<option value="' + esc(record.id) + '">' + esc(record.title) + '</option>').join("") + '</select></label><label><span>Reviewed on</span><input name="reviewedOn" type="date" required value="' + esc(currentDate()) + '"></label><label><span>Rationale</span><textarea name="rationale" rows="4" required placeholder="Explain why this Git change does not represent a real event."></textarea></label><div class="dialog-error" role="alert"></div><div class="save-status" role="status" aria-live="polite"></div><div class="dialog-actions"><button type="button" class="button" data-dismiss-dialog>Cancel</button><button type="submit" class="button primary" id="save-reconciliation-dismissal">Record dismissal</button></div></form>';
   document.body.append(dialog);
   dialog.showModal();
   dialog.querySelector(".icon-button").addEventListener("click", () => dialog.close());
@@ -5203,7 +5204,7 @@ function openReconciliationConfirmation(candidate) {
   const needsTimestamp = (candidate.requiredFacts || []).includes("occurredAt");
   const eventField = needsTimestamp
     ? '<label><span>Event time <small>your local time</small></span><input name="occurredAt" type="datetime-local" required value="' + esc(currentLocalDateTime()) + '"></label>'
-    : '<label><span>Event date</span><input name="occurredOn" type="date" required value="' + esc(currentDate()) + '"></label>';
+    : '<label><span>When it happened</span><input name="occurredOn" type="date" required value="' + esc(currentDate()) + '"></label>';
   const riskField = (candidate.requiredFacts || []).includes("riskLevel")
     ? '<label><span>Departure risk</span><select name="riskLevel" required><option value="normal">Normal</option><option value="high">High or involuntary</option></select></label>'
     : "";
@@ -5211,7 +5212,7 @@ function openReconciliationConfirmation(candidate) {
   dialog.className = "commit-dialog event-dialog";
   dialog.dataset.reconciliationConfirmation = candidate.transitionFingerprint;
   dialog.setAttribute("aria-labelledby", "reconciliation-confirmation-title");
-  dialog.innerHTML = '<form><div class="dialog-head"><div><p class="kicker">Git transition review</p><h2 id="reconciliation-confirmation-title">' + esc(policyEventName(candidate.eventType)) + '</h2></div><button type="button" class="icon-button" aria-label="Close">×</button></div><p>' + esc(candidate.message) + '</p><section class="event-dialog-steps"><div><strong>' + esc(candidate.subject.title || candidate.subject.id) + '</strong><small>' + esc(candidate.sourcePath) + '</small></div></section>' + eventField + riskField + '<label><span>Workflow name <small>optional</small></span><input name="title" maxlength="200" placeholder="' + esc(policyEventName(candidate.eventType)) + '"' + writeDisabled + '></label>' + (state.readOnly ? '<p class="dialog-note">Open this workspace in the local writable renderer or use the CLI to confirm or dismiss this transition.</p>' : "") + '<div class="dialog-error" role="alert"></div><div class="save-status" role="status" aria-live="polite"></div><div class="dialog-actions"><button type="button" class="button" data-dismiss-candidate' + writeDisabled + '>Dismiss false positive</button><button type="button" class="button" data-dismiss-dialog>Cancel</button><button type="submit" class="button primary"' + writeDisabled + '>Confirm and add work</button></div></form>';
+  dialog.innerHTML = '<form><div class="dialog-head"><div><p class="kicker">Change to check</p><h2 id="reconciliation-confirmation-title">' + esc(policyEventName(candidate.eventType)) + '</h2></div><button type="button" class="icon-button" aria-label="Close">×</button></div><p>' + esc(candidate.message) + '</p><section class="event-dialog-steps"><div><strong>' + esc(candidate.subject.title || candidate.subject.id) + '</strong><small>' + esc(candidate.sourcePath) + '</small></div></section>' + eventField + riskField + '<label><span>Task list name <small>optional</small></span><input name="title" maxlength="200" placeholder="' + esc(policyEventName(candidate.eventType)) + '"' + writeDisabled + '></label>' + (state.readOnly ? '<p class="dialog-note">This site is read-only. To confirm or dismiss this change, open the repository in FileGRC on your computer, or run the reconcile command in a copy of the repository.</p>' : "") + '<div class="dialog-error" role="alert"></div><div class="save-status" role="status" aria-live="polite"></div><div class="dialog-actions"><button type="button" class="button" data-dismiss-candidate' + writeDisabled + '>Dismiss false positive</button><button type="button" class="button" data-dismiss-dialog>Cancel</button><button type="submit" class="button primary"' + writeDisabled + '>Confirm and add work</button></div></form>';
   document.body.append(dialog);
   dialog.showModal();
   dialog.querySelector(".icon-button").addEventListener("click", () => dialog.close());
