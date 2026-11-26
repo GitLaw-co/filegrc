@@ -206,6 +206,8 @@ export function summarizeActions(actions, { viewerPersonId = null, today = new D
   const mine = viewerPersonId ? waiting.filter((action) => action.ownerId === viewerPersonId) : waiting;
   const overdue = (list) => list.filter((action) => /^\d{4}-\d{2}-\d{2}$/.test(String(action.due ?? "")) && action.due < today).length;
   const blocking = (list) => list.filter((action) => action.blocksPeriodStart === true).length;
+  const horizon = new Date(Date.parse(`${today}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10);
+  const dueSoon = (list) => list.filter((action) => /^\d{4}-\d{2}-\d{2}$/.test(String(action.due ?? "")) && action.due >= today && action.due <= horizon).length;
   return {
     scope: viewerPersonId ? "viewer" : "everyone",
     counts: {
@@ -213,7 +215,9 @@ export function summarizeActions(actions, { viewerPersonId = null, today = new D
       blocking: blocking(mine),
       overdue: overdue(mine),
       waitingEveryone: waiting.length,
-      blockingEveryone: blocking(waiting)
+      blockingEveryone: blocking(waiting),
+      overdueEveryone: overdue(waiting),
+      dueSoonEveryone: dueSoon(waiting)
     },
     items: mine.slice(0, limit).map(({ id, title, ownerId, status, priority, due, blocksPeriodStart, kind }) => ({
       id, title, ownerId, status, priority, due, kind, blocksPeriodStart: blocksPeriodStart === true,

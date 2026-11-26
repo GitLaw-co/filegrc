@@ -341,6 +341,167 @@ dialog::backdrop{background:rgb(0 0 0/.5)}
 :is(.bc-btn,.bc-input,.bc-select,.bc-textarea,.bc-badge,a,button,summary,[tabindex]):focus-visible{outline:2px solid var(--fg-focus);outline-offset:2px}
 `;
 
+// Dashboard look: neutral grey surfaces, 1px #e5e7eb borders, 6px cards without shadow,
+// near-black primary buttons, an orange accent for the active tab and navigation icon,
+// small page titles and large numbers. Colour tokens change in light mode only; dark
+// mode keeps Basecoat's palette and takes the status-pill tones below.
+export const DASHBOARD_STYLES = String.raw`
+:root{
+  --font-sans:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --radius:.5rem;--fg-card-radius:6px;--fg-accent-orange:#ea580b;
+  --tone-green-ink:#166534;--tone-green-bg:#f0fdf4;--tone-green-line:#4ade80;--tone-green-bar:#16a34a;
+  --tone-red-ink:#991b1b;--tone-red-bg:#fef2f2;--tone-red-line:#f87171;
+  --tone-amber-ink:#713f12;--tone-amber-bg:#fefce8;--tone-amber-line:#facc15;
+  --tone-blue-ink:#1e3a8a;--tone-blue-bg:#eff6ff;--tone-blue-line:#60a5fa;
+  --tone-grey-ink:#374151;--tone-grey-bg:#ffffff;--tone-grey-line:#d1d5db;
+  --fg-table-head:#f9fafb;
+}
+@media not (prefers-color-scheme:dark){:root{
+  --background:#ffffff;--foreground:#111827;--card:#ffffff;--card-foreground:#111827;--popover:#ffffff;--popover-foreground:#111827;
+  --muted:#f3f4f6;--muted-foreground:#6b7280;--accent:#f3f4f6;--accent-foreground:#111827;
+  --border:#e5e7eb;--input:#d1d5db;--ring:#9ca3af;--primary:#1f2937;--primary-foreground:#ffffff;
+  --secondary:#f3f4f6;--secondary-foreground:#111827;
+  --sidebar:#f9fafb;--sidebar-foreground:#111827;--sidebar-accent:#e5e7eb;--sidebar-accent-foreground:#111827;--sidebar-border:#f3f4f6;
+  --sidebar-primary:#1f2937;--sidebar-primary-foreground:#ffffff;
+}}
+@media (prefers-color-scheme:dark){:root{
+  --tone-green-ink:#86efac;--tone-green-bg:#052e16;--tone-green-line:#15803d;
+  --tone-red-ink:#fca5a5;--tone-red-bg:#450a0a;--tone-red-line:#b91c1c;
+  --tone-amber-ink:#fde68a;--tone-amber-bg:#422006;--tone-amber-line:#a16207;
+  --tone-blue-ink:#bfdbfe;--tone-blue-bg:#172554;--tone-blue-line:#1d4ed8;
+  --tone-grey-ink:#d1d5db;--tone-grey-bg:transparent;--tone-grey-line:#4b5563;
+  --fg-table-head:var(--muted);
+}}
+
+/* Status pills: one shape and five tones, used for every status word. */
+.status-pill{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;padding:1px 9px;border:1px solid var(--tone-grey-line);border-radius:999px;background:var(--tone-grey-bg);color:var(--tone-grey-ink);font-size:12px;font-weight:600;line-height:18px;white-space:nowrap}
+.status-pill:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.85}
+.status-pill.tone-green{border-color:var(--tone-green-line);background:var(--tone-green-bg);color:var(--tone-green-ink)}
+.status-pill.tone-red{border-color:var(--tone-red-line);background:var(--tone-red-bg);color:var(--tone-red-ink)}
+.status-pill.tone-amber{border-color:var(--tone-amber-line);background:var(--tone-amber-bg);color:var(--tone-amber-ink)}
+.status-pill.tone-blue{border-color:var(--tone-blue-line);background:var(--tone-blue-bg);color:var(--tone-blue-ink)}
+.status-cell{display:inline-flex;flex-direction:column;align-items:flex-start;gap:3px}
+.lifecycle-word{color:var(--muted-foreground);font-size:12px}
+
+/* Shell: small titles, flat cards, grey table headers. */
+.topbar{height:56px;padding:0 24px;background:var(--background);backdrop-filter:none}
+.topbar .eyebrow{display:none}
+.topbar h1{font-size:15px;font-weight:600;margin:0;letter-spacing:0}
+.page{max-width:none;padding:24px 24px 64px}
+.page-intro h2,.page-intro h1{font-size:20px;font-weight:600;letter-spacing:-.01em}
+.page-intro .kicker{font-size:12px;letter-spacing:.02em;text-transform:none;font-weight:500}
+.panel,.metric,.record-table-wrap,.stage-instructions,.stage-overview-hero,.stage-progress-card,.setup-steps a,.external-evidence-list>a,.catalog a,.hero,.overview-hero,.readiness-map{border-radius:var(--fg-card-radius);box-shadow:none}
+.record-table{font-size:14px}
+.record-table th,.record-table th.bc-table,table.bc-table.record-table th{background:var(--fg-table-head);color:var(--foreground);font-size:12px;font-weight:600;text-transform:none;letter-spacing:0;padding:10px 14px}
+.record-table td{height:53px;padding:10px 14px;vertical-align:middle;border-bottom-color:var(--border)}
+.record-table code{font-size:11px}
+.button.primary,.bc-btn[data-variant=primary]{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground);font-weight:600}
+.bc-btn,.button{border-radius:6px}
+[role=tablist]{gap:20px;padding:0;border-radius:0;background:transparent;border-bottom:1px solid var(--border)}
+[role=tablist]>[role=tab]{border:0;border-bottom:2px solid transparent;border-radius:0;padding:8px 0;color:var(--foreground);font-weight:400}
+[role=tablist]>[role=tab][aria-selected=true]{background:transparent;box-shadow:none;border-bottom-color:var(--fg-accent-orange);font-weight:600}
+
+/* Sidebar: Dashboard, then collapsible groups with icons; the current page is a grey
+   row with an orange dot, and its group icon turns orange. */
+.sp-sidebar{padding:20px 12px 12px}
+.sp-sidebar .brand{margin:0 6px 18px}
+.sp-nav{display:grid;align-content:start;gap:2px}
+.sp-top,.sp-group-toggle{display:flex;align-items:center;gap:10px;width:100%;padding:7px 8px;border:0;border-radius:4px;background:none;color:var(--sidebar-foreground);font:inherit;font-size:14px;font-weight:400;text-align:left;text-decoration:none;cursor:pointer}
+.sp-top:hover,.sp-group-toggle:hover,.sp-link:hover{background:var(--sidebar-accent)}
+.sp-top.current{background:var(--sidebar-accent);font-weight:600}
+.sp-icon{flex:0 0 auto;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--muted-foreground)}
+.sp-top.current .sp-icon,.sp-group.has-current>.sp-group-toggle .sp-icon{color:var(--fg-accent-orange)}
+.sp-group.has-current>.sp-group-toggle{font-weight:600}
+.sp-group-toggle .nav-chevron{margin-left:auto;color:var(--muted-foreground)}
+.sp-group.open>.sp-group-toggle .nav-chevron{transform:rotate(90deg)}
+.sp-group>.sp-links{display:none;padding:2px 0 6px}
+.sp-group.open>.sp-links{display:grid;gap:1px}
+.sp-link{position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px 6px 36px;border-radius:4px;color:var(--sidebar-foreground);font-size:14px;text-decoration:none}
+.sp-link.current{background:var(--sidebar-accent);font-weight:600}
+.sp-link.current:before{content:"";position:absolute;left:21px;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:50%;background:var(--fg-accent-orange)}
+.sp-more{display:grid}
+.sp-more-toggle{justify-self:start;margin:2px 0 2px 36px;padding:2px 6px;border:0;border-radius:4px;background:none;color:var(--muted-foreground);font:inherit;font-size:12px;cursor:pointer}
+.sp-more-toggle:hover{background:var(--sidebar-accent);color:var(--sidebar-foreground)}
+.sp-more>.sp-links{display:none}
+.sp-more.open>.sp-links{display:grid;gap:1px}
+.sp-count{display:inline-block;min-width:16px;padding:0 4px;border-radius:999px;background:var(--sidebar-accent);text-align:center}
+.sp-sidebar .automation-nav-panel{box-shadow:none;border-radius:6px}
+
+/* Overview dashboard. */
+.dash{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.dash>*,.dash-top>*,.dash-main>*,.dash-tiles>*{min-width:0}
+.record-table td[data-label="Code"]{white-space:nowrap}
+.dash-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+.dash-head h2{margin:0;font-size:20px;font-weight:600}
+.dash-head p{margin:4px 0 0;color:var(--muted-foreground);font-size:14px}
+.dash-head-actions{display:flex;flex-wrap:wrap;gap:8px}
+.dash-card{display:block;border:1px solid var(--border);border-radius:var(--fg-card-radius);background:var(--card);color:var(--card-foreground);padding:20px;text-decoration:none}
+a.dash-card:hover{border-color:var(--input)}
+.dash-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.dash-card-head h3{margin:0;font-size:16px;font-weight:600}
+.dash-card-head a,.dash-more{font-size:13px;color:var(--foreground)}
+.dash-top{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px}
+.dash-readiness{display:flex;align-items:center;gap:24px}
+.dash-readiness a{font-size:13px;color:var(--foreground)}
+.dash-ring{flex:0 0 auto;width:128px;height:128px}
+.dash-ring circle{fill:none;stroke-width:12}
+.dash-ring-track{stroke:var(--border)}
+.dash-ring-value{stroke:var(--tone-green-bar);stroke-linecap:round}
+.dash-ring text{fill:var(--foreground);font-size:26px;font-weight:600}
+.dash-label{display:block;color:var(--muted-foreground);font-size:13px;font-weight:500;margin:0}
+.dash-big{display:block;margin:4px 0;font-size:32px;line-height:1.1;font-weight:600;color:var(--foreground)}
+.dash-big span{font-size:14px;font-weight:400;color:var(--muted-foreground)}
+.dash-note{display:block;color:var(--muted-foreground);font-size:13px;margin:0 0 8px}
+.dash-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px}
+.dash-tile{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.dash-tile .status-pill{margin-top:auto}
+.dash-main{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:16px;align-items:start}
+.dash-table{width:100%;border-collapse:collapse;font-size:14px}
+.dash-table th{background:var(--fg-table-head);text-align:left;font-size:12px;font-weight:600;padding:10px 12px;border-bottom:1px solid var(--border)}
+.dash-table td{height:53px;padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+.dash-table tbody tr{cursor:pointer}
+.dash-table tbody tr:hover{background:var(--fg-table-head)}
+.dash-table td a{color:var(--foreground);font-weight:600;text-decoration:none}
+.dash-area-readiness{display:flex;align-items:center;gap:12px;height:53px}
+.dash-area-readiness .status-pill{min-width:84px;justify-content:center}
+.dash-bar{display:block;flex:1;min-width:60px;height:6px;border-radius:999px;background:var(--input);overflow:hidden}
+.dash-bar>span{display:block;height:100%;background:var(--tone-green-bar)}
+.dash-chevron{width:24px;color:var(--muted-foreground);text-align:right}
+.dash-footnote{margin:10px 0 0;color:var(--muted-foreground);font-size:12px}
+.dash-list{margin:0;padding:0;list-style:none}
+.dash-list li{border-bottom:1px solid var(--border)}
+.dash-list li:last-child{border-bottom:0}
+.dash-list a{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;color:var(--foreground);text-decoration:none}
+.dash-list a:hover strong{text-decoration:underline}
+.dash-list strong{display:block;font-size:14px;font-weight:500}
+.dash-list small{display:block;margin-top:2px;color:var(--muted-foreground);font-size:12px}
+.dash-more{display:inline-block;margin-top:10px}
+.dash-window{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px}
+.dash-window>div{display:grid;gap:2px}
+.dash-window strong{font-size:15px;font-weight:600}
+.dash-window small{color:var(--muted-foreground);font-size:13px}
+.dash-window-bar{flex:1 1 200px}
+.dash-window>a{font-size:13px;font-weight:600;color:var(--tone-red-ink)}
+.dash-setup{border:1px solid var(--border);border-radius:var(--fg-card-radius);background:var(--card)}
+.dash-setup>summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;cursor:pointer;list-style:none}
+.dash-setup>summary::-webkit-details-marker{display:none}
+.dash-setup>summary strong{display:block;font-size:16px;font-weight:600}
+.dash-setup>summary small{display:block;color:var(--muted-foreground);font-size:13px}
+.dash-setup-progress{display:flex;align-items:center;gap:10px;min-width:220px;font-size:13px;color:var(--muted-foreground)}
+.dash-setup-body{display:grid;gap:16px;padding:0 20px 20px}
+.dash .overview-grid{margin:0}
+@media(max-width:1100px){.dash-top,.dash-main{grid-template-columns:1fr}}
+@media(max-width:760px){
+  .page{padding:16px 16px 48px}
+  .dash-readiness{flex-direction:column;align-items:flex-start}
+  .dash-tiles{grid-template-columns:1fr 1fr}
+  .dash-table th:nth-child(2),.dash-table td:nth-child(2),.dash-chevron{display:none}
+  .dash-setup>summary{flex-direction:column;align-items:flex-start}
+  .dash-setup-progress{min-width:0;width:100%}
+  .dash-list a{align-items:flex-start}
+}
+`;
+
 // Basecoat components applied to FileGRC elements. The first entry whose selector matches
 // an element sets its Basecoat class and variant; later entries for the same class are skipped.
 export const THEME_CLASS_MAP = [
@@ -411,7 +572,7 @@ export function themeStylesheet(appStyles) {
     darkTokensForMediaQuery(BASECOAT_CSS),
     `@layer filegrc-reset{${FLOW_RESET}}`,
     `@layer filegrc{\n${themeLegacyStyles(appStyles)}\n}`,
-    `@layer filegrc-theme{${THEME_STYLES}}`
+    `@layer filegrc-theme{${THEME_STYLES}${DASHBOARD_STYLES}}`
   ].join("\n");
 }
 

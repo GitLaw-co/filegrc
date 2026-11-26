@@ -56,6 +56,8 @@ Both Google collectors also run without a key, for example on GitHub Actions wit
 
 Keep questions that need a person's answer in `actions/<ID>.json`. In hosted mode the owner approves, sends feedback or rejects each one at `/actions`, and anyone signed in can use **Suggest a change** on a record; both are saved to the `action-decisions` branch, not to main, for a reviewed change to fold in.
 
+The overview groups Controls into plain-English areas for its readiness table. Set a Control's area with `"extensions": { "filegrc": { "area": "access" } }`; without it, FileGRC picks the area from the Control's title.
+
 Give staff how-to pages by adding Markdown files such as `faq/laptop-encryption.md`. `npm run serve` lists them under Help inside the app (`#/help`, served from `/faq`), titled by each file's first `# ` heading, and adds a Help link to the sidebar. Pages are read-only, sit behind the same sign-in in hosted mode, and show raw HTML as text. The `faq/` folder is not part of the record data.
 
 Move an existing risk register in with `npx filegrc import-risks register.csv --preview`, then `--apply`. A risk with one score gets its rating band and stays marked for likelihood and impact rating. Each risk records the source file and import date. Rerunning skips risks that already exist.

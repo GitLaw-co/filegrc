@@ -1450,9 +1450,9 @@ test("uses the larger interface type scale", () => {
 test("persists each sidebar group state between page renders", () => {
   assert.match(APP_SCRIPT, /const NAV_GROUP_STORAGE_KEY = "filegrc\.sidebar\.groups\.v3"/);
   assert.match(APP_SCRIPT, /window\.localStorage\.getItem\(NAV_GROUP_STORAGE_KEY\)/);
-  assert.match(APP_SCRIPT, /navigationGroupState\[stage\.id\] \?\? currentStage\?\.id === stage\.id/);
-  assert.match(APP_SCRIPT, /navigationGroupState\[sectionKey\] \?\? \(sectionCurrent \|\| section\.defaultOpen\)/);
-  assert.match(APP_SCRIPT, /querySelectorAll\("\.nav-toggle, \.nav-subgroup-toggle"\)/);
+  assert.match(APP_SCRIPT, /const open = navigationGroupState\["sp:" \+ group\.id\] \?\? true/);
+  assert.match(APP_SCRIPT, /moreCurrent \|\| \(navigationGroupState\["sp:" \+ group\.id \+ ":more"\] \?\? false\)/);
+  assert.match(APP_SCRIPT, /querySelectorAll\("\.sp-group-toggle, \.sp-more-toggle"\)/);
   assert.match(APP_SCRIPT, /setNavigationGroupOpen\(group\.dataset\.group, open\)/);
   assert.match(APP_SCRIPT, /window\.localStorage\.setItem\(NAV_GROUP_STORAGE_KEY, JSON\.stringify\(navigationGroupState\)\)/);
 });
@@ -1552,7 +1552,7 @@ test("keeps metadata labels separate and structured details out of the narrative
 test("renders nested relationship values without exposing raw JSON", () => {
   assert.match(APP_SCRIPT, /function formatObjectArray\(items, objectType, compact = false\)/);
   assert.match(APP_SCRIPT, /definition\?\.items === "object"\) return formatObjectArray/);
-  assert.match(APP_SCRIPT, /controlLaunchState\(entry\.record\.id\) \|\| displayStatus\(entry\.record\)/);
+  assert.match(APP_SCRIPT, /controlLaunchState\(record\.id\) \|\| displayStatus\(record\)/);
   assert.match(APP_STYLES, /\.object-value-list\{display:grid;gap:7px\}/);
 });
 
@@ -1677,22 +1677,11 @@ test("uses semantic nesting within the readiness sidebar", () => {
   assert.deepEqual(section(operationStage, "Access and Training Completion").types, ["service-account", "access-grant", "access-review", "attestation"]);
   assert.deepEqual(section(auditStage, "Engagement").types, ["audit", "audit-request"]);
   assert.deepEqual(section(auditStage, "Fieldwork").types, ["audit-population", "control-test"]);
-  assert.match(APP_SCRIPT, /\}\)\.join\(""\) \+ renderSidebarUtility\(section\.utility, route, direct\)/);
   assert.match(APP_SCRIPT, /for \(const type of section\.types\)[\s\S]*if \(section\.utility === "audit-packet"\) destinations\.push/);
   assert.ok(section(operationStage, "Governance").types.length);
-  assert.match(APP_SCRIPT, /const direct = stage\.sections\.length === 1 \|\| sectionDestinations\(section\)\.length === 1/);
-  assert.match(APP_SCRIPT, /if \(direct\) return links/);
-  assert.match(APP_SCRIPT, /direct \? "nav-direct " : ""/);
-  assert.match(APP_SCRIPT, /class="nav-group nav-stage /);
-  assert.match(APP_SCRIPT, /class="nav-group nav-subgroup /);
-  assert.match(APP_SCRIPT, /<button class="nav-subheading-row nav-subgroup-toggle" type="button"/);
-  assert.match(APP_SCRIPT, /<span class="nav-subheading">/);
   assert.doesNotMatch(APP_SCRIPT, /class="nav-subheading [^"]*" href="#\/stage\//);
   assert.doesNotMatch(APP_SCRIPT, /class="nav-count"/);
-  assert.match(APP_SCRIPT, /class="nav-control-slot"/);
   assert.doesNotMatch(APP_SCRIPT, /<span>Overview<\/span>/);
-  assert.match(APP_SCRIPT, /class="nav-stage-number"/);
-  assert.match(APP_SCRIPT, /class="brand"' \+ \(route\.name === "home" \? ' aria-current="page"'/);
   assert.doesNotMatch(APP_STYLES, /--nav-count-width/);
   assert.match(APP_STYLES, /--nav-control-width:14px/);
   assert.match(APP_STYLES, /\.nav-heading-row\{display:grid;grid-template-columns:minmax\(0,1fr\) 24px;gap:2px;align-items:stretch\}/);
@@ -1704,13 +1693,12 @@ test("uses semantic nesting within the readiness sidebar", () => {
   assert.match(APP_STYLES, /\.nav-stage>\.nav-items>a\.nav-direct\{[^}]*grid-template-columns:minmax\(0,1fr\) var\(--nav-control-width\)/);
   assert.doesNotMatch(APP_STYLES, /\.nav-count\{/);
   assert.match(APP_STYLES, /\.nav-group\.open>\.nav-heading-row \.nav-chevron,\.nav-group\.open>\.nav-subheading-row \.nav-chevron\{transform:rotate\(90deg\)\}/);
-  assert.match(APP_SCRIPT, /href="#\/stage\/' \+ encodeURIComponent\(stage\.id\)/);
-  assert.match(APP_SCRIPT, /class="nav-toggle nav-stage-toggle"/);
   assert.doesNotMatch(APP_SCRIPT, /class="nav-toggle nav-subtoggle"/);
-  assert.match(APP_SCRIPT, /querySelectorAll\("\.nav-toggle, \.nav-subgroup-toggle"\)/);
   assert.match(APP_SCRIPT, /<svg class="nav-chevron" viewBox="0 0 12 12"/);
+  assert.match(APP_SCRIPT, /'<a class="sp-top' \+ \(route\.name === "home" \? " current" : ""\)/);
+  assert.match(APP_SCRIPT, /const NAV_GROUPS = \[/);
+  assert.match(APP_SCRIPT, /function navLink\(link, route\)/);
   assert.doesNotMatch(APP_SCRIPT, /<section class="nav-path"><p>Readiness path<\/p>/);
-  assert.match(APP_SCRIPT, /function readinessStageForRoute\(route\)/);
   assert.match(APP_SCRIPT, /function renderOrganization\(main\)/);
   assert.match(APP_SCRIPT, /class="organization-nav /);
   assert.doesNotMatch(APP_SCRIPT, /<h3>People and Teams<\/h3>/);
@@ -1794,8 +1782,6 @@ test("title-cases multi-word navigation and interface headings", () => {
   assert.ok(PROGRAM_PATH.some(({ sections }) => sections.some(({ title }) => title === "Work Queue")));
   assert.ok(PROGRAM_PATH.some(({ sections }) => sections.some(({ title }) => title === "Fieldwork")));
   assert.match(APP_SCRIPT, /esc\(titleCase\(definition\.pluralTitle\)\)/);
-  assert.match(APP_SCRIPT, /if \(utility === "obligation-board"\) return ""/);
-  assert.match(APP_SCRIPT, /<span>Audit Evidence &amp; Packet<\/span>/);
   assert.match(APP_SCRIPT, /<h1>' \+ esc\(titleCase\(title\)\)/);
   assert.match(APP_SCRIPT, /<h3>Prepare, Operate, Then Audit<\/h3>/);
   assert.match(APP_SCRIPT, /<h2>Prepare Fieldwork<\/h2>/);
@@ -2795,7 +2781,8 @@ test("renders shared obligation and evidence-packet workflows", () => {
 
 test("keeps the overview focused on readiness, current work, and the audit", () => {
   assert.match(APP_SCRIPT, /function readinessOverview\(\)/);
-  assert.match(APP_SCRIPT, /class="hero overview-hero"/);
+  assert.match(APP_SCRIPT, /'<details class="nav-group dash-setup'/);
+  assert.match(APP_SCRIPT, /\+ setupBanner \+ readinessOverview\(\) \+ auditPanel \+/);
   assert.match(APP_SCRIPT, /<span>' \+ esc\(label\) \+ '<\/span><strong>' \+ progress\.percent \+ '%<\/strong>/);
   assert.match(APP_SCRIPT, /progress\.mode === "operating-window" && !setupRegression \? "#\/stage\/run" : nextProgramStageHref\(\)/);
   assert.match(APP_SCRIPT, /pluralize\(noun, total\) \+ \(complete === 1 \? " is" : " are"\) \+ " ready\."/);

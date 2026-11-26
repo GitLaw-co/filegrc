@@ -238,9 +238,10 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       }
       if (request.method === "GET" && url.pathname === ACTION_SUMMARY_PATH) {
         const view = await actionRegister.view();
-        const summary = view.exists ? summarizeActions(view.actions, { viewerPersonId: actionPersonId || null, today: new Date((options.now ?? Date.now)()).toISOString().slice(0, 10) }) : null;
+        const summary = view.exists ? summarizeActions(view.actions, { viewerPersonId: actionPersonId || null, limit: 8, today: new Date((options.now ?? Date.now)()).toISOString().slice(0, 10) }) : null;
         const people = new Map((view.people ?? []).map((person) => [person.id, person.title]));
         if (summary) for (const item of summary.items) item.ownerName = people.get(item.ownerId) || item.ownerId || null;
+        if (summary) summary.viewerPersonId = actionPersonId || null;
         return json(response, 200, { exists: view.exists, summary });
       }
       // A browser opening /actions or /faq directly lands on the same page inside the app.
@@ -1020,7 +1021,10 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       if (request.method === "GET" && !url.pathname.startsWith("/api/")) {
         const helpHref = (await helpPages(helpRoot)).length ? "/faq" : null;
         const actionsHref = (await actionRegisterExists(input)) ? ACTIONS_PATH : null;
-        return text(response, 200, renderIndex(null, { helpHref, actionsHref, suggestHref: hostedAuth ? SUGGESTIONS_PATH : null }), "text/html; charset=utf-8");
+        // Every signed-in person has an acknowledgements page; only admins can issue auditor links.
+        const acknowledgementsHref = hostedAuth ? "/acknowledgements" : null;
+        const auditorLinksHref = hostedAuth && await hostedAuth.admin(request) ? AUDITOR_LINKS_PATH : null;
+        return text(response, 200, renderIndex(null, { helpHref, actionsHref, suggestHref: hostedAuth ? SUGGESTIONS_PATH : null, acknowledgementsHref, auditorLinksHref }), "text/html; charset=utf-8");
       }
       json(response, 404, { error: "Not found." });
     } catch (error) {
