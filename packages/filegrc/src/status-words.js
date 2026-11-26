@@ -34,18 +34,6 @@ export function governedStatusWord(record) {
   return null;
 }
 
-// Action register entries: done or accepted is Passing; a waiting action past its due
-// date is Failing; one due within 7 days, or with an answer proposed, is Due soon.
-export function actionStatusWord(action, today) {
-  if (["accepted", "done"].includes(action?.status)) return "passing";
-  if (!["open", "proposed"].includes(action?.status)) return null;
-  const due = /^\d{4}-\d{2}-\d{2}$/.test(String(action.due ?? "")) ? action.due : null;
-  if (due && due < today) return "failing";
-  if (due && due <= isoDatePlusDays(today, 7)) return "due-soon";
-  if (action.status === "proposed") return "due-soon";
-  return null;
-}
-
 // No per-person checks (training, device, acknowledgements) are recorded yet, so an
 // active person is Not monitored rather than Passing.
 export function personStatusWord(record) {
@@ -133,4 +121,4 @@ export function riskRatingDisplay(value) {
   return { label, tone, score };
 }
 
-export const STATUS_WORD_FUNCTIONS = [isoDatePlusDays, controlStatusWord, governedStatusWord, actionStatusWord, personStatusWord, isCheckRun, checkRunHistory, nightlyRuns, latestCheckResults, automatedCheckStatusWord, vendorStatusWord, statusWordForRecord, riskRatingDisplay];
+export const STATUS_WORD_FUNCTIONS = [isoDatePlusDays, controlStatusWord, governedStatusWord, personStatusWord, isCheckRun, checkRunHistory, nightlyRuns, latestCheckResults, automatedCheckStatusWord, vendorStatusWord, statusWordForRecord, riskRatingDisplay];

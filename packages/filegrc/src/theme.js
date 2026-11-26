@@ -490,6 +490,18 @@ a.dash-card:hover{border-color:var(--input)}
 .dash-setup-progress{display:flex;align-items:center;gap:10px;min-width:220px;font-size:13px;color:var(--muted-foreground)}
 .dash-setup-body{display:grid;gap:16px;padding:0 20px 20px}
 .dash .overview-grid{margin:0}
+/* Action task status: its own words, never the compliance ones. Late work is amber, not red. */
+.status-pill.tone-amber-outline{border-color:#ea580b;background:var(--background);color:#c2410c}
+.status-pill.tone-green-muted{border-color:var(--tone-green-line);background:transparent;color:var(--tone-green-ink);opacity:.85}
+.impact-tag{display:inline-flex;align-items:center;padding:1px 8px;border:1px solid var(--tone-amber-line);border-radius:4px;background:var(--tone-amber-bg);color:var(--tone-amber-ink);font-size:12px;font-weight:600;white-space:nowrap}
+.priority-chip{display:inline-flex;align-items:center;padding:1px 6px;border:1px solid var(--border);border-radius:4px;background:var(--muted);color:var(--muted-foreground);font-size:11px;font-weight:600;white-space:nowrap}
+.action-kind{color:var(--muted-foreground);font-size:12px;white-space:nowrap}
+.action-tags{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px}
+.dash-tags{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.dash-assigned .dash-list a{flex-direction:column;align-items:flex-start;gap:6px}
+.dash-subhead{margin:14px 0 2px;color:var(--muted-foreground);font-size:12px;font-weight:600}
+.dash-note-secondary{display:block;margin-top:2px;font-size:12px;opacity:.8}
+@media (prefers-color-scheme:dark){.status-pill.tone-amber-outline{border-color:#c2410c;color:#fdba74}}
 /* Record pages: status beside the title, summary strips, tabs, run strips. */
 .detail-head h2{font-size:24px;line-height:1.25;font-weight:600;letter-spacing:-.01em}
 .record-head-status{display:flex;align-items:center;gap:8px;margin-top:6px}

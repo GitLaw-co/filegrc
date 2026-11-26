@@ -5,9 +5,10 @@ import { APP_SCRIPT, renderActionsPage } from "../src/web.js";
 import { THEMED_APP_STYLES } from "../src/theme.js";
 import { areaReadiness, CONTROL_AREAS, controlAreaId, controlReadiness, readinessTone } from "../src/control-areas.js";
 import { NAV_GROUPS, navigationRouteKeys } from "../src/navigation.js";
+import { actionTaskStatus, blocksStartLabel, compareActions, observationPeriodStart } from "../src/action-status.js";
+import { filterActions, summarizeActions } from "../src/action-register.js";
 import { PROGRAM_PATH } from "../src/program-path.js";
 import {
-  actionStatusWord,
   automatedCheckStatusWord,
   checkRunHistory,
   isCheckRun,
@@ -60,12 +61,6 @@ test("maps records onto the five status words", () => {
   assert.deepEqual(["implemented", "partially-implemented", "planned", "not-applicable"].map((status) => controlStatusWord({ status })), ["passing", "failing", "not-monitored", null]);
   assert.deepEqual(["approved", "active", "draft", "in-review", "retired"].map((status) => governedStatusWord({ status })), ["passing", "passing", "due-soon", "due-soon", null]);
   const today = "2026-11-26";
-  assert.equal(actionStatusWord({ status: "open", due: "2026-11-05" }, today), "failing");
-  assert.equal(actionStatusWord({ status: "open", due: "2026-12-03" }, today), "due-soon");
-  assert.equal(actionStatusWord({ status: "open", due: "2026-12-04" }, today), null);
-  assert.equal(actionStatusWord({ status: "proposed", due: "2027-01-10" }, today), "due-soon");
-  assert.equal(actionStatusWord({ status: "done" }, today), "passing");
-  assert.equal(actionStatusWord({ status: "rejected", due: "2026-11-01" }, today), null);
   const vendor = { id: "vendor-a", status: "active" };
   assert.equal(vendorStatusWord(vendor, [], today), "not-monitored");
   assert.equal(vendorStatusWord(vendor, [{ vendorId: "vendor-a", status: "planned", scheduledFor: "2026-12-05" }], today), "due-soon");
@@ -118,7 +113,7 @@ test("the sidebar still reaches every page the setup path linked", () => {
 
 test("embeds the shared status and area functions in the browser app", () => {
   assert.doesNotThrow(() => new vm.Script(APP_SCRIPT));
-  for (const name of ["controlAreaId", "areaReadiness", "controlReadiness", "actionStatusWord", "latestCheckResults", "riskRatingDisplay", "statusWordForRecord"]) {
+  for (const name of ["controlAreaId", "areaReadiness", "controlReadiness", "actionTaskStatus", "compareActions", "latestCheckResults", "riskRatingDisplay", "statusWordForRecord"]) {
     assert.match(APP_SCRIPT, new RegExp(`function ${name}\\(`), name);
   }
   assert.match(APP_SCRIPT, /const CONTROL_AREA_RULES = \[/);
@@ -127,14 +122,15 @@ test("embeds the shared status and area functions in the browser app", () => {
   assert.match(THEMED_APP_STYLES, /--fg-accent-orange:#ea580b/);
 });
 
-test("action cards carry the shared status pill", () => {
+test("action cards carry the task status pill, never a compliance word", () => {
   const html = renderActionsPage({
     fragment: true,
     people: [{ id: "person-a", title: "A" }],
     allActions: [],
     actions: [{ id: "ACT-1", title: "Late", ownerId: "person-a", status: "open", due: "2000-01-01", kind: "fix" }]
   });
-  assert.match(html, /<span class="status-pill tone-red" data-status-word="failing">Failing<\/span>/);
+  assert.match(html, /<span class="status-pill tone-amber-outline" data-task-status="overdue">Overdue · \d+d<\/span>/);
+  assert.doesNotMatch(html, /Failing|tone-red/);
 });
 
 
@@ -188,4 +184,48 @@ test("search groups matching records by type, ranks title matches first and leav
   assert.deepEqual(pages, []);
   const risks = JSON.parse(vm.runInNewContext(source + "\nJSON.stringify(paletteResults('risks'))", context));
   assert.deepEqual(risks.pages.map(({ label }) => label), ["Risks"]);
+});
+
+test("actions read as tasks: to review, overdue by days, due soon, open, closed", () => {
+  const today = "2026-11-26";
+  const status = (action) => { const result = actionTaskStatus(action, today); return result && [result.id, result.label, result.tone]; };
+  assert.deepEqual(status({ status: "proposed", due: "2026-11-01" }), ["to-review", "To review", "blue"]);
+  assert.deepEqual(status({ status: "open", due: "2026-11-05" }), ["overdue", "Overdue · 21d", "amber-outline"]);
+  assert.deepEqual(status({ status: "open", due: "2026-12-03" }), ["due-soon", "Due soon", "amber"]);
+  assert.deepEqual(status({ status: "open", due: "2026-12-04" }), ["open", "Open", "grey"]);
+  assert.deepEqual(status({ status: "open" }), ["open", "Open", "grey"]);
+  assert.deepEqual(status({ status: "accepted" }), ["accepted", "Accepted", "green-muted"]);
+  assert.deepEqual(status({ status: "done" }), ["done", "Done", "green-muted"]);
+  assert.equal(status({ status: "rejected" }), null);
+  for (const action of [{ status: "open", due: "2020-01-01" }, { status: "proposed" }, { status: "done" }]) {
+    assert.ok(!["red", "green"].includes(actionTaskStatus(action, today).tone));
+  }
+});
+
+test("actions sort to review first, then blocking, priority, oldest due date and id; closed last", () => {
+  const actions = [
+    { id: "ACT-9", status: "done", priority: "p1", blocksPeriodStart: true, due: "2026-01-01" },
+    { id: "ACT-5", status: "open", priority: "p3", due: "2026-10-01" },
+    { id: "ACT-4", status: "open", priority: "p2", blocksPeriodStart: true, due: "2026-11-20" },
+    { id: "ACT-3", status: "open", priority: "p1", blocksPeriodStart: true, due: "2026-11-20" },
+    { id: "ACT-2", status: "open", priority: "p1", blocksPeriodStart: true, due: "2026-11-05" },
+    { id: "ACT-1", status: "proposed", priority: "p3", due: "2026-12-30" },
+    { id: "ACT-6", status: "open", priority: "p1", due: "2026-09-01" }
+  ];
+  assert.deepEqual([...actions].sort(compareActions).map(({ id }) => id), ["ACT-1", "ACT-2", "ACT-3", "ACT-4", "ACT-6", "ACT-5", "ACT-9"]);
+  assert.deepEqual(filterActions(actions, { status: "waiting" }).map(({ id }) => id), ["ACT-1", "ACT-2", "ACT-3", "ACT-4", "ACT-6", "ACT-5"]);
+  const summary = summarizeActions(actions, { today: "2026-11-26" });
+  assert.equal(summary.counts.toReviewEveryone, 1);
+  assert.equal(summary.items[0].id, "ACT-1");
+});
+
+test("the blocks tag names the period start when the program or audit records one", () => {
+  assert.equal(blocksStartLabel("2026-12-01"), "Blocks 1 Dec");
+  assert.equal(blocksStartLabel(null), "Blocks period start");
+  const program = { type: "program", status: "active", candidateCoverage: { kind: "range", startsOn: "2026-12-01", endsOn: "2027-02-28" } };
+  assert.equal(observationPeriodStart([program]), "2026-12-01");
+  assert.equal(observationPeriodStart([program, { type: "audit", status: "fieldwork", coverage: { kind: "range", startsOn: "2027-01-01", endsOn: "2027-03-31" } }]), "2027-01-01");
+  assert.equal(observationPeriodStart([{ type: "program", status: "active" }]), null);
+  const html = renderActionsPage({ fragment: true, periodStart: "2026-12-01", people: [], allActions: [], actions: [{ id: "ACT-1", title: "Gate", ownerId: "p", status: "open", blocksPeriodStart: true, priority: "p1", kind: "fix" }] });
+  assert.match(html, /<span class="impact-tag">Blocks 1 Dec<\/span><span class="priority-chip">P1<\/span><span class="status-pill tone-grey" data-task-status="open">Open<\/span>/);
 });
