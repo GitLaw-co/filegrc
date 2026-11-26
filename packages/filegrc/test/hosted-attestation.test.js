@@ -10,6 +10,8 @@ import { contentRevision } from "../src/files.js";
 import { signSession } from "../src/hosted-auth.js";
 import { listOwedAttestations } from "../src/resource-mutation.js";
 import { serveWorkspace } from "../src/server.js";
+import { formatCalendarDate } from "../src/time.js";
+import { APP_STYLES, stripDocumentHeader } from "../src/web.js";
 import { loadWorkspace } from "../src/workspace.js";
 import { makeComprehensiveWorkspace } from "./fixtures.js";
 import { captureCli } from "./helpers.js";
@@ -92,14 +94,26 @@ test("the acknowledgements page lists owed training for its audience only", asyn
   const worker = await fetch(`${url}/acknowledgements`, { headers: { cookie: as(WORKER) } });
   assert.equal(worker.status, 200);
   const page = await worker.text();
-  assert.match(page, /Security Awareness Training/);
-  assert.match(page, new RegExp(`name="subjectResourceId" value="${TRAINING}"`));
+  // The list links each owed item to its reader; confirming happens there.
+  assert.match(page, /My policies and training/);
+  assert.match(page, /0 of 1 done/);
+  assert.match(page, new RegExp(`href="/acknowledgements\\?item=${TRAINING}"[^>]*>Security Awareness Training<`));
+  assert.doesNotMatch(page, /name="subjectResourceId"/);
   // The app shell locks html/body scrolling; a standalone page must opt out or long content cannot be read.
   assert.match(page, /<body class="standalone-page">/);
 
+  const reader = await (await fetch(`${url}/acknowledgements?item=${TRAINING}`, { headers: { cookie: as(WORKER) } })).text();
+  assert.match(reader, /<h1>Security Awareness Training<\/h1>/);
+  assert.match(reader, new RegExp(`<form class="ack-confirm" method="post" action="/acknowledgements">\\s*<input type="hidden" name="subjectResourceId" value="${TRAINING}">`));
+  assert.match(reader, />I have completed Security Awareness Training</);
+  assert.match(reader, /min read/);
+
   const outsider = await (await fetch(`${url}/acknowledgements`, { headers: { cookie: as(OUTSIDER) } })).text();
   assert.doesNotMatch(outsider, /Security Awareness Training/);
-  assert.match(outsider, /nothing to acknowledge/i);
+  assert.match(outsider, /You're up to date/);
+  const notOwed = await (await fetch(`${url}/acknowledgements?item=${TRAINING}`, { headers: { cookie: as(OUTSIDER) } })).text();
+  assert.match(notOwed, /That item is not waiting for you/);
+  assert.doesNotMatch(notOwed, /name="subjectResourceId"/);
 
   const signedOut = await fetch(`${url}/acknowledgements`, { redirect: "manual" });
   assert.equal(signedOut.status, 302);
@@ -148,6 +162,13 @@ test("submitting records the session's person, binds the current revision and co
   await waitForPush(root, remote);
 
   assert.deepEqual(await listOwedAttestations(root, WORKER), []);
+  // Completed work stays listed, read-only.
+  const after = await (await fetch(`${url}/acknowledgements?done=${TRAINING}`, { headers: { cookie: as(WORKER) } })).text();
+  assert.match(after, /committed to the program repository/);
+  assert.match(after, /1 of 1 done/);
+  assert.match(after, /You're up to date/);
+  assert.match(after, new RegExp(`Security Awareness Training</span>[\\s\\S]*Done on ${formatCalendarDate(record.completedOn)}`));
+  assert.doesNotMatch(after, /name="subjectResourceId"/);
   const validation = await captureCli(runCli, ["validate", "--root", root]);
   assert.equal(validation.exitCode, 0, validation.stdout + validation.stderr);
 });
@@ -182,8 +203,28 @@ test("outside trunk mode an acknowledgement is saved on the decisions branch, ne
   // The page counts it as done, and a second submit is refused.
   const page = await (await fetch(`${url}/acknowledgements?done=${TRAINING}`, { headers: { cookie: as(WORKER) } })).text();
   assert.match(page, /saved and is added to the program record at the next review/);
+  assert.match(page, /Done on /);
   assert.doesNotMatch(page, new RegExp(`value="${TRAINING}"`));
   const again = await post();
   assert.equal(again.status, 409);
   assert.equal((await git(remote, ["ls-tree", "-r", "--name-only", "action-decisions"])).split("\n").length, 1);
+});
+
+test("standalone pages scroll the viewport, not a body that cannot scroll", () => {
+  // overflow:auto on body made it a scroll container with auto height, and Basecoat's
+  // overscroll-behavior:none on body kept wheel and trackpad scrolling from reaching the viewport.
+  const rule = /html:has\(>body\.standalone-page\),body\.standalone-page\{([^}]*)\}/.exec(APP_STYLES);
+  assert.ok(rule, "the standalone-page opt-out rule is missing");
+  assert.match(rule[1], /overflow:visible/);
+  assert.doesNotMatch(rule[1], /overflow:(auto|scroll|hidden)/);
+  assert.match(APP_STYLES, /body\.standalone-page\{overscroll-behavior:auto\}/);
+});
+
+test("the reader drops a spec header block and the repeated title", () => {
+  const source = "Status: Approved\nOwner: @gitlaw\nLast-Reviewed: 2026-03-23\nLayer: 20-policies\nDepends-On: none\n\n# HR Security Procedure\n\nVersion 1\n\n## Objective\n\nText.";
+  assert.equal(stripDocumentHeader(source, "HR Security Procedure"), "\nVersion 1\n\n## Objective\n\nText.");
+  assert.equal(stripDocumentHeader("Status: Approved • Owner: @gitlaw\n\nBody", "Other"), "Body");
+  // A document without the block keeps its opening line, even one shaped like a field.
+  assert.equal(stripDocumentHeader("Purpose: keep data safe.\n\nBody", "Policy"), "Purpose: keep data safe.\n\nBody");
+  assert.equal(stripDocumentHeader("# Another heading\n\nBody", "Policy"), "# Another heading\n\nBody");
 });

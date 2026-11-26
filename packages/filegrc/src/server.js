@@ -1051,28 +1051,56 @@ async function acknowledgements(input, request, response, url, personId, request
   const renderer = initial.resources.find(({ type, id }) => type === "renderer-settings" && id === "renderer-settings");
   const aside = renderer?.repositoryMode !== "trunk";
   const attestationDirectory = `data/${initial.model.resources.attestation?.collection || "attestations"}`;
-  const pendingSubjects = async () => new Set(aside
+  const savedAttestations = async () => aside
     ? (await register.savedRecords(attestationDirectory))
       .filter((record) => record?.type === "attestation" && record.personId === personId)
-      .flatMap((record) => record.subjectResourceIds ?? [])
-    : []);
+    : [];
+  const pendingSubjects = async () => new Set((await savedAttestations()).flatMap((record) => record.subjectResourceIds ?? []));
   const page = async (status, extra = {}) => {
     const loaded = await loadWorkspace(input);
-    const pending = await pendingSubjects();
+    const saved = await savedAttestations();
+    const pending = new Set(saved.flatMap((record) => record.subjectResourceIds ?? []));
     const owed = (await listOwedAttestations(loaded, personId)).filter(({ subjectId }) => !pending.has(subjectId));
+    const byId = new Map(loaded.resources.map((record) => [record.id, record]));
+    const describe = (subject) => ({
+      subjectType: subject.type,
+      title: subject.title,
+      version: subject.version ?? null,
+      approvedOn: subject.approvedOn ?? null,
+      approvedBy: (subject.approverIds ?? []).map((id) => byId.get(id)?.title).filter(Boolean)
+    });
     const items = await Promise.all(owed.map(async (item) => {
-      const content = await readResourceContent(loaded, loaded.resources.find(({ id }) => id === item.subjectId));
-      return { ...item, content: Object.values(content).map(({ source }) => source).join("\n\n") };
+      const subject = byId.get(item.subjectId);
+      const content = await readResourceContent(loaded, subject);
+      return { ...item, ...describe(subject), content: Object.values(content).map(({ source }) => source).join("\n\n") };
     }));
-    const person = loaded.resources.find(({ id }) => id === personId);
-    return text(response, status, renderAcknowledgementsPage({ person, items, savedAside: aside, ...extra }), "text/html; charset=utf-8");
+    // What this person already completed, newest per subject, so finished work
+    // stays on the page. A subject owed again shows only as owed.
+    const owedIds = new Set(owed.map(({ subjectId }) => subjectId));
+    const completed = new Map();
+    const finished = [
+      ...loaded.resources.filter((record) => record.type === "attestation" && record.personId === personId),
+      ...saved
+    ].filter((record) => record.status === "completed" && LISTED_ATTESTATION_KINDS.has(record.attestationKind));
+    for (const record of finished) {
+      for (const subjectId of record.subjectResourceIds ?? []) {
+        const subject = byId.get(subjectId);
+        const previous = completed.get(subjectId);
+        if (!subject || owedIds.has(subjectId) || (previous && String(previous.completedOn) >= String(record.completedOn))) continue;
+        completed.set(subjectId, { subjectId, attestationKind: record.attestationKind, completedOn: record.completedOn, ...describe(subject) });
+      }
+    }
+    const person = byId.get(personId);
+    return text(response, status, renderAcknowledgementsPage({ person, items, completed: [...completed.values()], savedAside: aside, ...extra }), "text/html; charset=utf-8");
   };
-  if (request.method === "GET") return page(200, { done: url.searchParams.get("done") });
+  if (request.method === "GET") return page(200, { done: url.searchParams.get("done"), item: url.searchParams.get("item") });
   const asJson = String(request.headers["content-type"] || "").startsWith("application/json");
+  let subjectId = null;
   try {
     const payload = asJson
       ? await readJson(request)
       : { record: { subjectResourceIds: [new URLSearchParams(await readForm(request)).get("subjectResourceId")] } };
+    subjectId = payload.record?.subjectResourceIds?.[0] ?? null;
     const person = (await loadWorkspace(input)).resources.find(({ id }) => id === personId);
     const author = { name: person?.title, email: person?.email };
     commitAuthorEnvironment(author);
@@ -1106,9 +1134,12 @@ async function acknowledgements(input, request, response, url, personId, request
   } catch (error) {
     if (asJson) throw error;
     const status = error.status ?? statusFor(error);
-    return page(status, { error: publicErrorMessage(error, status) });
+    return page(status, { error: publicErrorMessage(error, status), item: subjectId });
   }
 }
+
+// The attestation kinds the acknowledgements page lists: the two listOwedAttestations assigns.
+const LISTED_ATTESTATION_KINDS = new Set(["training", "workforce-acknowledgement"]);
 
 // The signed-in Person, with the email decisions are recorded under.
 async function actionViewer(input, hostedAuth, request, personId) {

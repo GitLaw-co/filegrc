@@ -13,7 +13,7 @@ export const NAV_GROUPS = [
     icon: "check",
     links: [
       { server: "actionsHref", href: "#/actions", label: "Actions", route: "actions" },
-      { server: "acknowledgementsHref", label: "My acknowledgements" }
+      { server: "acknowledgementsHref", label: "My policies and training" }
     ]
   },
   {
