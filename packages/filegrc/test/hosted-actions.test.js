@@ -429,11 +429,16 @@ test("the sidebar links to Actions when the register exists and shows the worksp
   const { root, url, as } = await fixture(context);
   const index = await (await fetch(`${url}/`, { headers: { cookie: as(OWNER) } })).text();
   assert.match(index, /data-actions-href="\/actions"/);
-  const source = APP_SCRIPT.slice(APP_SCRIPT.indexOf("function helpNavigation"), APP_SCRIPT.indexOf("function hostedNavigation"));
-  const navigation = (dataset, route = {}) => vm.runInNewContext(source + "\nhelpNavigation(route) + '|' + primaryNavigation(route)", {
-    document: { body: { dataset } }, esc: String, route, state: { actionSummary: { counts: { waiting: 3 } } }
+  assert.match(index, /data-acknowledgements-href="\/acknowledgements"/);
+  assert.doesNotMatch(index, /data-auditor-links-href/);
+  const source = APP_SCRIPT.slice(APP_SCRIPT.indexOf("function helpNavigation"), APP_SCRIPT.indexOf("function sidebarGuidePanel"))
+    + APP_SCRIPT.slice(APP_SCRIPT.indexOf("function navLink"), APP_SCRIPT.indexOf("function navIcon"));
+  const navigation = (dataset, route = {}) => vm.runInNewContext(source + `
+    helpNavigation(route) + "|" + [{ server: "actionsHref", href: "#/actions", label: "Actions", route: "actions" }, { server: "acknowledgementsHref", label: "My acknowledgements" }]
+      .map((link) => navLink(link, route)?.html || "").join("")`, {
+    document: { body: { dataset } }, esc: String, route, state: { actionSummary: { counts: { waiting: 3 } }, model: { resources: {} } }
   });
-  assert.equal(navigation({ actionsHref: "/actions", helpHref: "/faq" }, { name: "actions" }), '<a class="help-nav" href="#/help">Help</a>|<div class="sidebar-primary-nav"><a class="current" href="#/actions"><span>Actions</span><span class="sidebar-action-count" aria-label="3 waiting for your decision">3</span></a></div>');
+  assert.equal(navigation({ actionsHref: "/actions", helpHref: "/faq", acknowledgementsHref: "/acknowledgements" }, { name: "actions" }), '<a class="help-nav" href="#/help">Help</a>|<a class="sp-link current" href="#/actions" aria-current="page"><span>Actions</span><span class="sidebar-action-count" aria-label="3 waiting for your decision">3</span></a><a class="sp-link" href="/acknowledgements"><span>My acknowledgements</span></a>');
   assert.equal(navigation({}), "|");
 
   assert.ok(APP_SCRIPT.includes('esc(state.workspace.brandName || document.body.dataset.appName || "FileGRC")'));
@@ -533,8 +538,10 @@ test("the overview summary counts the signed-in person's waiting actions, or eve
     action("D", { status: "done" })
   ], { viewerPersonId: OWNER, today: "2026-11-03" });
   assert.equal(summary.scope, "viewer");
-  assert.deepEqual(summary.counts, { waiting: 2, blocking: 1, overdue: 1, waitingEveryone: 3, blockingEveryone: 2 });
+  assert.deepEqual(summary.counts, { waiting: 2, blocking: 1, overdue: 1, waitingEveryone: 3, blockingEveryone: 2, overdueEveryone: 1, dueSoonEveryone: 0 });
   assert.deepEqual(summary.items.map(({ id, overdue }) => [id, overdue]), [["A", true], ["B", false]]);
+  assert.equal(summarizeActions([action("B", { due: "2026-12-01" })], { today: "2026-11-17" }).counts.dueSoonEveryone, 1);
+  assert.equal(summarizeActions([action("B", { due: "2026-12-01" })], { today: "2026-11-16" }).counts.dueSoonEveryone, 0);
   assert.equal(summarizeActions([action("A"), action("C", { ownerId: OTHER })]).scope, "everyone");
 
   const { url, as } = await fixture(context);
@@ -543,6 +550,7 @@ test("the overview summary counts the signed-in person's waiting actions, or eve
   const body = await response.json();
   assert.equal(body.summary.scope, "viewer");
   assert.deepEqual(body.summary.items.map(({ id }) => id), ["ACT-001", "ACT-004"]);
+  assert.equal(body.summary.viewerPersonId, OWNER);
   assert.equal(body.summary.items[0].ownerName.length > 0, true);
   const anonymous = await fetch(`${url}/api/actions/summary`, { redirect: "manual" });
   assert.equal(anonymous.status, 401);

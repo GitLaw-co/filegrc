@@ -17,6 +17,9 @@ import { PROGRAM_PATH, programPathForModel, RESOURCE_INSTRUCTIONS, RESOURCE_OUTP
 import { formatCalendarDate, formatLocalDateTime } from "./time.js";
 import { escapeHtml, renderMarkdown } from "./markdown.js";
 import { ACTION_FILTER_KEYS, ACTION_KIND_LABELS } from "./action-register.js";
+import { CONTROL_AREA_FUNCTIONS, CONTROL_AREA_RULES, CONTROL_AREAS } from "./control-areas.js";
+import { NAV_GROUPS, NAV_ICONS } from "./navigation.js";
+import { actionStatusWord, STATUS_WORD_FUNCTIONS, STATUS_WORDS } from "./status-words.js";
 
 export function dashboardProgramReadiness(programReadiness = {}) {
   const progress = programReadiness.progress || {};
@@ -314,13 +317,12 @@ function actionCard(action, { personName, hidden, viewer, open }) {
   const kind = Object.hasOwn(ACTION_KINDS, action.kind) ? ACTION_KINDS[action.kind] : ACTION_KINDS.decision;
   const today = new Date().toISOString().slice(0, 10);
   const waiting = ["open", "proposed"].includes(action.status);
-  const overdue = waiting && typeof action.due === "string" && action.due < today;
   const tags = [
     `<span class="badge">${escapeHtml(kind.label)}</span>`,
     action.priority ? `<span class="badge">${escapeHtml(String(action.priority).toUpperCase())}</span>` : "",
     action.blocksPeriodStart === true && waiting ? '<span class="badge warn">Blocks period start</span>' : "",
-    overdue ? '<span class="badge bad">Overdue</span>' : "",
-    waiting ? "" : `<span class="badge${["accepted", "done"].includes(action.status) ? " good" : ""}">${escapeHtml(ACTION_STATUS_LABELS[action.status] || action.status)}</span>`
+    waiting ? "" : `<span class="badge${["accepted", "done"].includes(action.status) ? " good" : ""}">${escapeHtml(ACTION_STATUS_LABELS[action.status] || action.status)}</span>`,
+    actionStatusPill(action, today)
   ].join("");
   const meta = [action.id, `Owner ${personName(action.ownerId)}`, action.due ? `Due ${action.due}` : ""].filter(Boolean).map(escapeHtml).join(" · ");
   const section = (label, html) => html ? `<section class="action-section"><h3>${label}</h3>${html}</section>` : "";
@@ -368,6 +370,13 @@ function actionCard(action, { personName, hidden, viewer, open }) {
   </details>`;
 }
 
+// The shared status word for an action, as the app's pills render it.
+function actionStatusPill(action, today) {
+  const word = actionStatusWord(action, today);
+  const definition = word && STATUS_WORDS[word];
+  return definition ? `<span class="status-pill tone-${definition.tone}" data-status-word="${word}">${escapeHtml(definition.label)}</span>` : "";
+}
+
 // Which version of each linked pull request an Approve covers, read when the page was built.
 function pullRequestScope(action) {
   const items = (action.pullRequests ?? []).map((pr) => pr.headSha
@@ -410,7 +419,7 @@ function helpDocument(title, body) {
 </html>`;
 }
 
-export function renderIndex(state = null, { helpHref = null, actionsHref = null, suggestHref = null } = {}) {
+export function renderIndex(state = null, { helpHref = null, actionsHref = null, suggestHref = null, acknowledgementsHref = null, auditorLinksHref = null } = {}) {
   const snapshot = state
     ? `<script id="filegrc-data" type="application/json">${safeJson(state)}</script>`
     : "";
@@ -424,7 +433,7 @@ export function renderIndex(state = null, { helpHref = null, actionsHref = null,
   <link rel="icon" type="image/png" href="./favicon.png">
   <link rel="stylesheet" href="./filegrc.css">
 </head>
-<body data-app-name="${escapeHtml(appName())}"${helpHref ? ` data-help-href="${escapeHtml(helpHref)}"` : ""}${actionsHref ? ` data-actions-href="${escapeHtml(actionsHref)}"` : ""}${suggestHref ? ` data-suggest-href="${escapeHtml(suggestHref)}"` : ""}>
+<body data-app-name="${escapeHtml(appName())}"${helpHref ? ` data-help-href="${escapeHtml(helpHref)}"` : ""}${actionsHref ? ` data-actions-href="${escapeHtml(actionsHref)}"` : ""}${suggestHref ? ` data-suggest-href="${escapeHtml(suggestHref)}"` : ""}${acknowledgementsHref ? ` data-acknowledgements-href="${escapeHtml(acknowledgementsHref)}"` : ""}${auditorLinksHref ? ` data-auditor-links-href="${escapeHtml(auditorLinksHref)}"` : ""}>
   <a class="skip-link" href="#main">Skip to content</a>
   <div id="app"><div class="loading" role="status" aria-live="polite" aria-busy="true"><span class="spinner" aria-hidden="true"></span><span>Loading workspace…</span></div></div>
   ${snapshot}
@@ -462,6 +471,12 @@ const workflowHrefBelongsToPage = ${workflowHrefBelongsToPage.toString()};
 const pageActionIdentity = ${pageActionIdentity.toString()};
 const resolveWorkflowDestination = ${resolveWorkflowDestination.toString()};
 const selectDefaultAudit = ${selectDefaultAudit.toString()};
+const STATUS_WORDS = ${JSON.stringify(STATUS_WORDS)};
+const CONTROL_AREAS = ${JSON.stringify(CONTROL_AREAS)};
+const CONTROL_AREA_RULES = ${JSON.stringify(CONTROL_AREA_RULES)};
+const NAV_GROUPS = ${JSON.stringify(NAV_GROUPS)};
+const NAV_ICONS = ${JSON.stringify(NAV_ICONS)};
+${[...STATUS_WORD_FUNCTIONS, ...CONTROL_AREA_FUNCTIONS].map((fn) => fn.toString()).join("\n")}
 const STAGE_PAGE_SUMMARIES = ${JSON.stringify({
   ...RESOURCE_PAGE_SUMMARIES,
   "utility:evidence-sources": "Check that each Control has an authoritative, retrievable evidence source.",
@@ -714,63 +729,58 @@ function parseRoute() {
 }
 
 function buildNavigation(route) {
-  const currentStage = readinessStageForRoute(route);
-  const contextualStageId = route.params?.get("stage");
-  const stages = READINESS_STAGES.map((stage) => {
-    const stagePageCurrent = (route.name === "stage" && route.stageId === stage.id)
-      || (stage.id === "run" && route.name === "obligations");
-    const stageOpen = navigationGroupState[stage.id] ?? currentStage?.id === stage.id;
-    const sections = stage.sections.map((section) => {
-      const sectionKey = stage.id + ":" + section.id;
-      const sectionCurrent = (route.type && section.types.includes(route.type) && (!contextualStageId || contextualStageId === stage.id))
-        || (section.relatedLinks || []).some((link) => route.type === link.type && contextualStageId === stage.id)
-        || (section.utility === "obligation-board" && route.name === "obligations")
-        || (section.utility === "audit-packet" && route.name === "audit-packet")
-        || (section.utility === "evidence-sources" && route.name === "evidence-sources")
-        || (section.relatedLinks || []).some((link) => link.href === "#/" + route.name)
-        || (section.utility === "retention-schedule" && route.name === "retention-schedule");
-      const sectionOpen = navigationGroupState[sectionKey] ?? (sectionCurrent || section.defaultOpen);
-      const resources = section.types
-        .map((type) => [type, state.model.resources[type]])
-        .filter(([, definition]) => definition);
-      const direct = stage.sections.length === 1 || sectionDestinations(section).length === 1;
-      const links = resources.map(([type, definition]) => {
-        const current = route.type === type && (!contextualStageId || contextualStageId === stage.id);
-        return '<a class="' + (direct ? "nav-direct " : "") + (current ? "current" : "") + '" href="#/resources/' + encodeURIComponent(type) + '"><span>' + esc(titleCase(definition.pluralTitle)) + '</span><span class="nav-control-slot" aria-hidden="true"></span></a>';
-      }).join("") + (section.relatedLinks || []).map((link) => {
-        const current = route.type === link.type && contextualStageId === stage.id
-          || link.href === "#/stage/" + route.stageId
-          || link.href === "#/" + route.name;
-        return '<a class="' + (direct ? "nav-direct " : "") + (current ? "current" : "") + '" href="' + esc(link.href) + '"><span>' + esc(link.label) + '</span><span class="nav-control-slot" aria-hidden="true"></span></a>';
-      }).join("") + renderSidebarUtility(section.utility, route, direct);
-      if (direct) return links;
-      return '<section class="nav-group nav-subgroup ' + (sectionOpen ? "open" : "") + '" data-group="' + esc(sectionKey) + '"><button class="nav-subheading-row nav-subgroup-toggle" type="button" aria-label="' + (sectionOpen ? "Collapse " : "Expand ") + esc(section.title) + '" aria-expanded="' + sectionOpen + '" aria-controls="nav-group-' + esc(sectionKey) + '"><span class="nav-subheading">' + esc(section.title) + '</span><svg class="nav-chevron" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5 7.5 6 4 9.5"></path></svg></button><div class="nav-items" id="nav-group-' + esc(sectionKey) + '">' + links + '</div></section>';
-    }).join("");
-    return '<section class="nav-group nav-stage ' + (stageOpen ? "open" : "") + '" data-group="' + esc(stage.id) + '"><div class="nav-heading-row"><a class="nav-heading ' + (stagePageCurrent ? "current" : "") + '" href="#/stage/' + encodeURIComponent(stage.id) + '"><span class="nav-stage-number">' + esc(stage.number) + '</span><span class="nav-stage-copy"><strong>' + esc(stage.title) + '</strong><small>' + esc(stage.description) + '</small></span></a><button class="nav-toggle nav-stage-toggle" type="button" aria-label="' + (stageOpen ? "Collapse " : "Expand ") + esc(stage.title) + '" aria-expanded="' + stageOpen + '" aria-controls="nav-group-' + esc(stage.id) + '"><svg class="nav-chevron" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5 7.5 6 4 9.5"></path></svg></button></div><div class="nav-items" id="nav-group-' + esc(stage.id) + '">' + sections + '</div></section>';
-  }).join("");
   const organizationCurrent = route.name === "organization" || route.name === "repository" || ["workspace", "renderer-settings"].includes(route.type);
   const organizationName = state.workspace.organizationName || "Organization";
   const initial = organizationName.trim().charAt(0).toUpperCase() || "O";
-  return '<aside class="sidebar" id="sidebar-navigation"><button class="nav-close" type="button" aria-label="Close navigation">×</button><a href="#/" class="brand"' + (route.name === "home" ? ' aria-current="page"' : "") + '><img class="mark" src="./logo-mark-white.png" alt="" width="39" height="39"><span><strong>' + esc(state.workspace.brandName || document.body.dataset.appName || "FileGRC") + '</strong><small>' + esc(state.workspace.brandSubtitle || "SOC 2 workspace") + '</small></span></a><label class="search mobile-sidebar-search"><span aria-hidden="true">⌕</span><input data-global-search type="search" placeholder="Search records" aria-label="Search records"></label><nav class="sidebar-nav">' + primaryNavigation(route) + stages + '</nav>' + sidebarGuidePanel() + '<div class="sidebar-footer">' + helpNavigation(route) + '<a class="organization-nav ' + (organizationCurrent ? "current" : "") + '" href="#/organization"><span class="organization-mark">' + esc(initial) + '</span><span><strong>' + esc(organizationName) + '</strong><small>Organization</small></span><span class="organization-arrow">›</span></a></div></aside><button class="nav-scrim" type="button" aria-label="Close navigation"></button>';
+  const dashboard = '<a class="sp-top' + (route.name === "home" ? " current" : "") + '" href="#/"' + (route.name === "home" ? ' aria-current="page"' : "") + '>' + navIcon("home") + '<span>Dashboard</span></a>';
+  const groups = NAV_GROUPS.map((group) => {
+    const links = group.links.map((link) => navLink(link, route)).filter(Boolean);
+    const more = (group.more || []).map((link) => navLink(link, route)).filter(Boolean);
+    if (!links.length && !more.length) return "";
+    const current = [...links, ...more].some((link) => link.current);
+    const moreCurrent = more.some((link) => link.current);
+    const open = navigationGroupState["sp:" + group.id] ?? true;
+    const moreOpen = moreCurrent || (navigationGroupState["sp:" + group.id + ":more"] ?? false);
+    const moreBlock = more.length
+      ? '<section class="nav-group sp-more' + (moreOpen ? " open" : "") + '" data-group="sp:' + esc(group.id) + ':more"><button class="sp-more-toggle" type="button" aria-expanded="' + moreOpen + '" aria-controls="sp-more-' + esc(group.id) + '">' + (moreOpen ? "Fewer" : "More") + ' <span class="sp-count">' + more.length + '</span></button><div class="sp-links" id="sp-more-' + esc(group.id) + '">' + more.map((link) => link.html).join("") + '</div></section>'
+      : "";
+    return '<section class="nav-group sp-group' + (open ? " open" : "") + (current ? " has-current" : "") + '" data-group="sp:' + esc(group.id) + '"><button class="sp-group-toggle" type="button" aria-expanded="' + open + '" aria-controls="sp-group-' + esc(group.id) + '">' + navIcon(group.icon) + '<span>' + esc(group.title) + '</span><svg class="nav-chevron" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5 7.5 6 4 9.5"></path></svg></button><div class="sp-links" id="sp-group-' + esc(group.id) + '">' + links.map((link) => link.html).join("") + moreBlock + '</div></section>';
+  }).join("");
+  return '<aside class="sidebar sp-sidebar" id="sidebar-navigation"><button class="nav-close" type="button" aria-label="Close navigation">×</button><a href="#/" class="brand"><img class="mark" src="./logo-mark-white.png" alt="" width="39" height="39"><span><strong>' + esc(state.workspace.brandName || document.body.dataset.appName || "FileGRC") + '</strong><small>' + esc(state.workspace.brandSubtitle || "SOC 2 workspace") + '</small></span></a><label class="search mobile-sidebar-search"><span aria-hidden="true">⌕</span><input data-global-search type="search" placeholder="Search records" aria-label="Search records"></label><nav class="sidebar-nav sp-nav" aria-label="Main">' + dashboard + groups + '</nav>' + sidebarGuidePanel() + '<div class="sidebar-footer">' + helpNavigation(route) + '<a class="organization-nav ' + (organizationCurrent ? "current" : "") + '" href="#/organization"><span class="organization-mark">' + esc(initial) + '</span><span><strong>' + esc(organizationName) + '</strong><small>Organization</small></span><span class="organization-arrow">›</span></a></div></aside><button class="nav-scrim" type="button" aria-label="Close navigation"></button>';
 }
 
-function readinessStageForRoute(route) {
-  if (route.name === "stage") return READINESS_STAGES.find((stage) => stage.id === route.stageId);
-  if (route.name === "policies") return READINESS_STAGES.find((stage) => stage.id === "policies");
-  const contextualStageId = route.params?.get("stage");
-  const contextualStage = contextualStageId && READINESS_STAGES.find((stage) => (
-    stage.id === contextualStageId
-    && stage.sections.some((section) => (section.relatedLinks || []).some((link) => link.type === route.type))
-  ));
-  if (contextualStage) return contextualStage;
-  return READINESS_STAGES.find((stage) => (
-    (stage.supportingResourceTypes || []).includes(route.type)
-    || stage.sections.some((section) => section.types.includes(route.type)
-      || (section.utility === "obligation-board" && route.name === "obligations")
-      || (section.utility === "audit-packet" && route.name === "audit-packet")
-      || (section.utility === "evidence-sources" && route.name === "evidence-sources")
-      || (section.utility === "retention-schedule" && route.name === "retention-schedule"))
-  ));
+// One sidebar link, or null when the workspace does not have that page: a record type
+// the model does not define, or a server page this deployment does not serve.
+function navLink(link, route) {
+  let href = link.href;
+  let current = false;
+  let count = "";
+  if (link.type) {
+    if (!state.model.resources[link.type]) return null;
+    href = "#/resources/" + encodeURIComponent(link.type);
+    current = (route.name === "list" || route.name === "detail") && route.type === link.type
+      && !(link.type === "document" && route.params?.get("documentScope") === "audit");
+  } else if (link.server) {
+    const served = document.body.dataset[link.server];
+    if (!served) return null;
+    if (!href) href = served;
+    current = link.route ? route.name === link.route : false;
+    if (link.server === "actionsHref") {
+      const waiting = state.actionSummary?.counts?.waiting;
+      if (waiting) count = '<span class="sidebar-action-count" aria-label="' + waiting + ' waiting for your decision">' + waiting + '</span>';
+    }
+  } else if (link.route === "audit-documents") {
+    current = route.type === "document" && route.params?.get("documentScope") === "audit";
+  } else if (link.route?.startsWith("stage:")) {
+    current = route.name === "stage" && route.stageId === link.route.slice(6) || link.route === "stage:run" && route.name === "obligations";
+  } else {
+    current = route.name === link.route;
+  }
+  return { current, html: '<a class="sp-link' + (current ? " current" : "") + '" href="' + esc(href) + '"' + (current ? ' aria-current="page"' : "") + '><span>' + esc(link.label) + '</span>' + count + '</a>' };
+}
+
+function navIcon(name) {
+  return '<svg class="sp-icon" viewBox="0 0 24 24" aria-hidden="true">' + (NAV_ICONS[name] || "") + '</svg>';
 }
 
 function readinessStageForType(type) {
@@ -787,24 +797,9 @@ function activeProgram() {
     || state.workspace;
 }
 
-function renderSidebarUtility(utility, route, direct = false) {
-  const directClass = direct ? "nav-direct " : "";
-  if (utility === "obligation-board") return "";
-  if (utility === "evidence-sources") {
-    return '<a class="' + directClass + (route.name === "evidence-sources" ? "current" : "") + '" href="#/evidence-sources"><span>Evidence Sources</span><span class="nav-control-slot" aria-hidden="true"></span></a>';
-  }
-  if (utility === "retention-schedule") {
-    return '<a class="' + directClass + (route.name === "retention-schedule" ? "current" : "") + '" href="#/retention-schedule"><span>Data Retention Schedule</span><span class="nav-control-slot" aria-hidden="true"></span></a>';
-  }
-  if (utility === "audit-packet") {
-    return '<a class="' + directClass + 'audit-packet-link ' + (route.name === "audit-packet" ? "current" : "") + '" href="#/audit-packet"><span>Audit Evidence &amp; Packet</span><span class="nav-control-slot" aria-hidden="true"></span></a>';
-  }
-  return "";
-}
-
 function topbar(route) {
   const title = route.name === "home"
-    ? "Program Overview"
+    ? "Dashboard"
     : route.name === "actions"
       ? "Actions"
     : route.name === "help"
@@ -914,11 +909,176 @@ function renderHome(main) {
     ? '<section class="panel event-reminder-panel"><div class="panel-head"><div><p class="kicker">Event reminders</p><h3>Did Something Change?</h3></div><a href="#/stage/run?section=events">Trigger work</a></div>' + eventReminderPreview(orderedPolicyEventTriggers(acceptedEventTriggers).slice(0, 4)) + '</section>'
     : "";
   const operationPanels = obligationPanel + eventPanel;
-  const overviewPanels = operationPanels + auditPanel;
-  main.innerHTML = '<div class="page home-page">' + homeActionsPanel() + '<section class="hero overview-hero"><div><p class="kicker">Current program state</p><h2>' + esc(titleCase(state.workspace.title)) + '</h2><p>' + esc(state.workspace.description || "Governance, risk, controls, evidence, and audit work maintained as plain files in Git.") + '</p></div></section>' + setupBanner + readinessOverview() +
-    (overviewPanels ? '<div class="overview-grid">' + overviewPanels + '</div>' : '') + '</div>';
+  const controls = programControls();
+  const readiness = controlReadiness(controls);
+  const setupOpen = navigationGroupState["home:program-setup"] ?? false;
+  main.innerHTML = '<div class="page home-page dash">' + dashboardHeader()
+    + '<div class="dash-top">' + readinessCard(readiness) + dashboardTiles(readiness) + '</div>'
+    + '<div class="dash-main">' + areaReadinessTable(controls) + assignedToYouPanel() + '</div>'
+    + observationWindowStrip()
+    + (operationPanels ? '<div class="overview-grid">' + operationPanels + '</div>' : '')
+    + '<details class="nav-group dash-setup' + (setupOpen ? " open" : "") + '" data-group="home:program-setup"' + (setupOpen ? " open" : "") + '><summary><span><strong>Program setup</strong><small>The five-step path: define scope, approve policies, implement controls, operate, audit.</small></span>' + programSetupBadge() + '</summary><div class="dash-setup-body">' + setupBanner + readinessOverview() + auditPanel + '</div></details>'
+    + '</div>';
   main.querySelector("#resume-setup")?.addEventListener("click", () => requestOnboarding({ setupOnly: true }));
+  main.querySelector(".dash-setup")?.addEventListener("toggle", (event) => setNavigationGroupOpen("home:program-setup", event.currentTarget.open));
+  main.querySelectorAll("[data-area-row]").forEach((row) => row.addEventListener("click", (event) => {
+    if (!event.target.closest("a")) location.hash = row.dataset.areaRow;
+  }));
   if (document.body.dataset.actionsHref && !state.actionSummary && !actionSummaryRequest) loadActionSummary();
+}
+
+// The Controls the active Program covers; every Control when the Program lists none.
+function programControls() {
+  const ids = new Set(activeProgram().controlIds || []);
+  const controls = resourcesOfType("control").map(({ record }) => record);
+  return ids.size ? controls.filter((record) => ids.has(record.id)) : controls;
+}
+
+function statusPill(word) {
+  const definition = STATUS_WORDS[word];
+  return definition ? '<span class="status-pill tone-' + definition.tone + '" data-status-word="' + esc(word) + '">' + esc(definition.label) + '</span>' : "";
+}
+
+function tonePill(label, tone) {
+  return '<span class="status-pill tone-' + esc(tone) + '">' + esc(label) + '</span>';
+}
+
+function viewerPerson() {
+  const id = state.actionSummary?.viewerPersonId;
+  return id ? resourcesOfType("person").find(({ record }) => record.id === id)?.record || null : null;
+}
+
+function dashboardHeader() {
+  const person = viewerPerson();
+  const program = activeProgram();
+  const first = person ? String(person.title || "").trim().split(/\s+/)[0] : "";
+  const scope = [program.title, (program.tags || []).map(properCase).join(", ")].filter(Boolean).join(" · ");
+  const acknowledgements = document.body.dataset.acknowledgementsHref;
+  const guide = workspaceGuide();
+  const buttons = (guide ? guideLink(guide, "button", guide.title) : "")
+    + (acknowledgements ? '<a class="button" href="' + esc(acknowledgements) + '">My acknowledgements</a>' : "")
+    + (document.body.dataset.actionsHref ? '<a class="button primary" href="#/actions">Open actions</a>' : "");
+  return '<div class="dash-head"><div><h2>' + esc(first ? "Hello, " + first : titleCase(program.title || state.workspace.title || "Program")) + '</h2>' + (scope && first ? '<p>' + esc(scope) + '</p>' : "") + '</div><div class="dash-head-actions">' + buttons + '</div></div>';
+}
+
+function readinessCard(readiness) {
+  const radius = 52;
+  const length = 2 * Math.PI * radius;
+  const filled = length * readiness.percent / 100;
+  const ring = '<svg class="dash-ring" viewBox="0 0 128 128" role="img" aria-label="' + readiness.percent + '% of in-scope controls implemented"><circle cx="64" cy="64" r="' + radius + '" class="dash-ring-track"></circle><circle cx="64" cy="64" r="' + radius + '" class="dash-ring-value" stroke-dasharray="' + filled.toFixed(1) + ' ' + length.toFixed(1) + '" transform="rotate(-90 64 64)"></circle><text x="64" y="70" text-anchor="middle">' + readiness.percent + '%</text></svg>';
+  const notes = [readiness.planned ? readiness.planned + " planned" : "", readiness.partial ? readiness.partial + " with gaps" : "", readiness.excluded + " not applicable"].filter(Boolean).join(" · ");
+  return '<section class="dash-card dash-readiness">' + ring + '<div><p class="dash-label">Audit readiness</p><p class="dash-big">' + readiness.ready + ' <span>of ' + readiness.inScope + ' controls</span></p><p class="dash-note">Implemented controls ÷ controls in scope. ' + esc(notes) + '.</p><a href="#/resources/control">View controls</a></div></section>';
+}
+
+function dashboardTiles(readiness) {
+  const tile = (label, value, note, href, extra = "") => '<a class="dash-card dash-tile" href="' + esc(href) + '"><span class="dash-label">' + esc(label) + '</span><strong class="dash-big">' + value + '</strong><span class="dash-note">' + note + '</span>' + extra + '</a>';
+  const tiles = [tile("Controls ready", esc(String(readiness.ready)), esc(readiness.inScope - readiness.ready) + " still to implement", "#/resources/control")];
+  const checks = resourcesOfType("automated-check").filter(({ record }) => record.status === "active").map(({ record }) => record);
+  if (checks.length) {
+    const latest = latestCheckResults(resourcesOfType("evidence").map(({ record }) => record));
+    const words = checks.map((record) => automatedCheckStatusWord(record, latest));
+    const failing = words.filter((word) => word === "failing").length;
+    const passing = words.filter((word) => word === "passing").length;
+    const unmonitored = words.filter((word) => word === "not-monitored").length;
+    const note = passing + " passing of " + checks.length + (unmonitored ? " · " + unmonitored + " not run yet" : "");
+    tiles.push(tile("Checks failing", esc(String(failing)), esc(note), "#/resources/automated-check", statusPill(failing ? "failing" : passing ? "passing" : "not-monitored")));
+  }
+  const summary = state.actionSummary;
+  if (document.body.dataset.actionsHref) {
+    const counts = summary?.counts || {};
+    const ready = summary && !summary.failed;
+    tiles.push(tile("Actions waiting", ready ? esc(String(counts.waitingEveryone ?? 0)) : "…", ready ? esc((counts.overdueEveryone ?? 0) + " overdue") : "Loading", "#/actions?owner=&status=waiting"));
+  }
+  const today = currentDate();
+  const horizon = isoDatePlusDays(today, 14);
+  const queueDue = state.sections?.obligations === "complete"
+    ? activeOperationItems(queueState().items).filter((item) => {
+      const due = String(item.dueOn || item.dueWindowEnd || "").slice(0, 10);
+      return due && due >= today && due <= horizon && item.status !== "overdue";
+    }).length
+    : 0;
+  const actionDue = summary?.counts?.dueSoonEveryone ?? 0;
+  tiles.push(tile("Due in 14 days", esc(String(actionDue + queueDue)), esc(actionDue + " " + pluralize("action", actionDue) + " · " + queueDue + " scheduled"), "#/stage/run"));
+  return '<div class="dash-tiles">' + tiles.join("") + '</div>';
+}
+
+function areaReadinessTable(controls) {
+  const rows = areaReadiness(controls);
+  const body = rows.length ? rows.map((row) => {
+    const href = "#/resources/control?area=" + encodeURIComponent(row.id);
+    const tone = readinessTone(row.percent, row.total);
+    return '<tr data-area-row="' + esc(href) + '"><td data-primary-field><a href="' + esc(href) + '">' + esc(row.label) + '</a></td><td>' + row.ready + ' of ' + row.total + ' ready</td><td class="dash-area-readiness">' + tonePill(row.percent + "% ready", tone) + '<span class="dash-bar" aria-hidden="true"><span style="width:' + row.percent + '%"></span></span></td><td class="dash-chevron" aria-hidden="true">›</td></tr>';
+  }).join("") : '<tr><td colspan="4">' + empty("No controls are in scope yet.") + '</td></tr>';
+  return '<section class="dash-card dash-areas"><div class="dash-card-head"><h3>Readiness by area</h3><a href="#/resources/control">All controls</a></div><table class="dash-table"><thead><tr><th>Area</th><th>Controls</th><th>Readiness</th><th><span class="sr-only">Open</span></th></tr></thead><tbody>' + body + '</tbody></table><p class="dash-footnote">A control\'s area comes from its <code>extensions.filegrc.area</code> field, or from its title when that is not set.</p></section>';
+}
+
+// The viewer's waiting actions and the scheduled work they own, soonest first.
+function assignedToYouPanel() {
+  const summary = state.actionSummary;
+  const viewerId = summary?.viewerPersonId || null;
+  const today = currentDate();
+  const horizon = isoDatePlusDays(today, 14);
+  const actions = (summary?.items || []).map((item) => ({
+    due: item.due || "",
+    href: "#/actions?q=" + encodeURIComponent(item.id) + "&owner=&status=all",
+    title: item.title || item.id,
+    meta: [item.id, item.priority ? String(item.priority).toUpperCase() : "", item.due ? "due " + formatCalendarDate(item.due) : "", viewerId ? "" : item.ownerName || ""].filter(Boolean).join(" · "),
+    word: actionStatusWord({ status: item.status, due: item.due }, today)
+  }));
+  const queueWord = { overdue: "failing", blocked: "critical", due: "due-soon" };
+  const scheduled = viewerId && state.sections?.obligations === "complete"
+    ? distinctObligationPreviews(activeOperationItems(queueState().items).filter((item) => (
+      (item.ownerIds || []).includes(viewerId)
+      && (["overdue", "due", "blocked"].includes(item.status) || String(item.dueOn || item.dueWindowEnd || "").slice(0, 10) <= horizon)
+    )), 5).map((item) => ({
+      due: String(item.dueOn || item.dueWindowEnd || "").slice(0, 10),
+      href: "#/stage/run",
+      title: item.title,
+      meta: "Scheduled · " + timingText(item),
+      word: queueWord[item.status] || null
+    }))
+    : [];
+  const items = [...actions, ...scheduled].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999")).slice(0, 8);
+  let body;
+  if (document.body.dataset.actionsHref && !summary) body = '<p class="home-actions-status" role="status"><span class="spinner" aria-hidden="true"></span> Loading your work…</p>';
+  else if (summary?.failed) body = '<p class="home-actions-status" role="alert">Actions could not load. <a href="#/actions">Open the Actions page</a>.</p>';
+  else if (!items.length) body = '<p class="home-actions-status">Nothing is assigned to you right now.</p>';
+  else body = '<ul class="dash-list">' + items.map((item) => '<li><a href="' + esc(item.href) + '"><span><strong>' + esc(item.title) + '</strong><small>' + esc(item.meta) + '</small></span>' + statusPill(item.word) + '</a></li>').join("") + '</ul>';
+  const more = viewerId && (summary?.counts?.waiting || 0) > actions.length ? '<a class="dash-more" href="#/actions">' + esc(String(summary.counts.waiting - actions.length)) + ' more waiting on you</a>' : "";
+  return '<section class="dash-card dash-assigned"><div class="dash-card-head"><h3>' + (summary && !viewerId ? "Waiting for a decision" : "Assigned to you") + '</h3>' + (document.body.dataset.actionsHref ? '<a href="#/actions">All actions</a>' : "") + '</div>' + body + more + '</section>';
+}
+
+// The candidate period from the Program, or the open audit's period when there is one.
+function observationWindow() {
+  const activeAudit = resourcesOfType("audit").find((item) => !["issued", "delivered", "complete"].includes(item.record.status))?.record;
+  const coverage = [activeAudit?.coverage, state.programReadiness?.target?.candidateCoverage, activeProgram().candidateCoverage]
+    .find((value) => value?.kind === "range" && value.startsOn && value.endsOn);
+  return coverage ? { startsOn: coverage.startsOn, endsOn: coverage.endsOn } : null;
+}
+
+function observationWindowStrip() {
+  const period = observationWindow();
+  const blocking = state.actionSummary?.counts?.blockingEveryone || 0;
+  const blockingLink = document.body.dataset.actionsHref && blocking
+    ? '<a href="#/actions?blocks=yes&amp;owner=&amp;status=waiting">' + blocking + ' waiting ' + pluralize("action", blocking) + ' block the start</a>'
+    : "";
+  if (!period) {
+    return '<section class="dash-card dash-window"><div><span class="dash-label">Observation window</span><strong>Not set</strong><small>Record it as the Program\'s candidate period to track it here.</small></div>' + blockingLink + '</section>';
+  }
+  const day = (value) => Date.UTC(...value.split("-").map((part, index) => Number(part) - (index === 1 ? 1 : 0)));
+  const today = currentDate();
+  const total = Math.round((day(period.endsOn) - day(period.startsOn)) / 86400000) + 1;
+  const elapsed = Math.min(total, Math.max(0, Math.round((day(today) - day(period.startsOn)) / 86400000) + 1));
+  const position = today < period.startsOn
+    ? "Starts in " + Math.round((day(period.startsOn) - day(today)) / 86400000) + " days"
+    : today > period.endsOn ? "Ended" : "Day " + elapsed + " of " + total + " · " + (total - elapsed) + " days left";
+  return '<section class="dash-card dash-window"><div><span class="dash-label">Observation window</span><strong>' + esc(formatCalendarDate(period.startsOn) + " to " + formatCalendarDate(period.endsOn)) + '</strong><small>' + esc(position) + '</small></div><span class="dash-bar dash-window-bar" aria-hidden="true"><span style="width:' + Math.round(elapsed / total * 100) + '%"></span></span>' + blockingLink + '</section>';
+}
+
+function programSetupBadge() {
+  if (state.sections?.program !== "complete") return '<span class="spinner" aria-hidden="true"></span>';
+  const progress = dashboardProgramReadiness(state.programReadiness);
+  return '<span class="dash-setup-progress">' + esc(progress.label) + ' ' + progress.percent + '%<span class="dash-bar" aria-hidden="true"><span style="width:' + progress.percent + '%"></span></span></span>';
 }
 
 let actionSummaryRequest = null;
@@ -933,39 +1093,11 @@ function loadActionSummary() {
     const route = parseRoute();
     if (route.name === "home") render();
     else {
-      const nav = root.querySelector(".sidebar-primary-nav");
-      if (nav) nav.outerHTML = primaryNavigation(route);
+      const link = root.querySelector('.sp-link[href="#/actions"]');
+      const waiting = state.actionSummary?.counts?.waiting;
+      if (link && waiting && !link.querySelector(".sidebar-action-count")) link.insertAdjacentHTML("beforeend", '<span class="sidebar-action-count" aria-label="' + waiting + ' waiting for your decision">' + waiting + '</span>');
     }
   });
-}
-
-// The first thing on the overview: what is waiting on the signed-in person, and how
-// to get it done.
-function homeActionsPanel() {
-  const guide = workspaceGuide();
-  const guideCard = guide
-    ? '<section class="panel guide-panel"><div class="panel-head"><div><p class="kicker">Getting work done</p><h3>' + esc(guide.title) + '</h3></div></div>' + (guide.message ? '<p class="guide-panel-copy">' + esc(guide.message) + '</p>' : "") + guideLink(guide, "button", "Open the guide") + '</section>'
-    : "";
-  if (!document.body.dataset.actionsHref) return guideCard ? '<div class="home-actions-grid">' + guideCard + '</div>' : "";
-  const summary = state.actionSummary;
-  let body;
-  if (!summary) body = '<p class="home-actions-status" role="status"><span class="spinner" aria-hidden="true"></span> Loading your actions…</p>';
-  else if (summary.failed) body = '<p class="home-actions-status" role="alert">Actions could not load. <a href="#/actions">Open the Actions page</a>.</p>';
-  else {
-    const counts = summary.counts || {};
-    const mine = summary.scope === "viewer";
-    const stat = (value, label, tone) => '<div class="home-action-stat' + (tone && value ? " " + tone : "") + '"><strong>' + esc(String(value || 0)) + '</strong><span>' + esc(label) + '</span></div>';
-    const stats = '<div class="home-action-stats">' + stat(counts.waiting, mine ? "Waiting on you" : "Waiting for a decision") + stat(counts.blocking, "Block the period start", "warn") + stat(counts.overdue, "Overdue", "bad") + '</div>';
-    const items = (summary.items || []).map((item) => {
-      const meta = [item.id, item.priority ? String(item.priority).toUpperCase() : "", item.due ? "Due " + item.due : "", mine ? "" : item.ownerName || ""].filter(Boolean).join(" · ");
-      const tags = (item.overdue ? '<span class="badge bad">Overdue</span>' : "") + (item.blocksPeriodStart ? '<span class="badge warn">Blocks start</span>' : "");
-      return '<li><a href="#/actions?q=' + encodeURIComponent(item.id) + '&amp;owner=&amp;status=all"><span class="home-action-copy"><strong>' + esc(item.title || item.id) + '</strong><small>' + esc(meta) + '</small></span><span class="home-action-tags">' + tags + '</span></a></li>';
-    }).join("");
-    const more = counts.waiting > (summary.items || []).length ? '<p class="home-actions-more">' + esc(String(counts.waiting - summary.items.length)) + ' more waiting.</p>' : "";
-    body = stats + (items ? '<ul class="home-action-list">' + items + '</ul>' + more : '<p class="home-actions-status">' + (mine ? "Nothing is waiting on you." : "Nothing is waiting for a decision.") + (counts.waitingEveryone ? " " + esc(String(counts.waitingEveryone)) + " actions wait on others." : "") + '</p>');
-  }
-  const actionsPanel = '<section class="panel home-actions-panel"><div class="panel-head"><div><p class="kicker">Actions</p><h3>' + (summary?.scope === "everyone" ? "Waiting for a decision" : "Waiting on you") + '</h3></div><a class="button primary" href="#/actions">Open Actions</a></div>' + body + '</section>';
-  return '<div class="home-actions-grid' + (guideCard ? "" : " single") + '">' + actionsPanel + guideCard + '</div>';
 }
 
 function withFragment(params) {
@@ -1425,7 +1557,7 @@ function renderPoliciesTable(params = new URLSearchParams()) {
     const record = entry.record;
     const detail = '#/resource/' + encodeURIComponent(record.type) + '/' + encodeURIComponent(record.id) + '?stage=policies' + (record.type === "document" ? '&documentScope=program' : '');
     const owners = ownerNames(record);
-    return '<tr data-policy-content-row data-history="' + (["superseded", "retired"].includes(record.status) ? 'true' : 'false') + '"><td data-label="Name" data-primary-field><a class="record-title" href="' + detail + '">' + esc(record.title) + '</a><small><code>' + esc(record.id) + '</code></small></td><td data-label="Type" class="policy-content-type">' + typeLabel(record) + '</td><td data-label="Owner">' + (owners.length ? esc(owners.join(", ")) : '<span class="muted">Missing</span>') + '</td><td data-label="Status">' + formatValue(displayStatus(record), "status", record.type, true) + '</td><td data-label="Approval" class="policy-content-approval">' + approval(record) + '</td><td data-label="Next action">' + policyContentWorkflowCell(entry) + '</td></tr>';
+    return '<tr data-policy-content-row data-history="' + (["superseded", "retired"].includes(record.status) ? 'true' : 'false') + '"><td data-label="Name" data-primary-field><a class="record-title" href="' + detail + '">' + esc(record.title) + '</a><small><code>' + esc(record.id) + '</code></small></td><td data-label="Type" class="policy-content-type">' + typeLabel(record) + '</td><td data-label="Owner">' + (owners.length ? esc(owners.join(", ")) : '<span class="muted">Missing</span>') + '</td><td data-label="Status">' + listCell(record.type, record, "status") + '</td><td data-label="Approval" class="policy-content-approval">' + approval(record) + '</td><td data-label="Next action">' + policyContentWorkflowCell(entry) + '</td></tr>';
   };
   const add = !state.readOnly
     ? '<details class="policy-content-add"><summary class="button primary">Add</summary><div><button type="button" data-add-policy-content="policy">Policy</button><button type="button" data-add-policy-content="document">Document</button><button type="button" data-add-policy-content="training">Training</button></div></details>'
@@ -1881,13 +2013,6 @@ function collectionReviewVisible(type) {
 function helpNavigation(route = {}) {
   const help = document.body.dataset.helpHref;
   return help ? '<a class="help-nav' + (route.name === "help" ? " current" : "") + '" href="#/help">Help</a>' : "";
-}
-
-function primaryNavigation(route = {}) {
-  const actions = document.body.dataset.actionsHref;
-  if (!actions) return "";
-  const count = state.actionSummary?.counts?.waiting;
-  return '<div class="sidebar-primary-nav"><a class="' + (route.name === "actions" ? "current" : "") + '" href="#/actions"><span>Actions</span>' + (count ? '<span class="sidebar-action-count" aria-label="' + count + ' waiting for your decision">' + count + '</span>' : "") + '</a></div>';
 }
 
 function sidebarGuidePanel() {
@@ -4129,6 +4254,7 @@ function renderList(main, type, params = new URLSearchParams()) {
   const entries = resourcesOfType(type).filter(({ record }) => (
     !documentScope || (documentScope === "audit") === auditSpecificDocument(record)
   ));
+  if (type === "control") entries.sort((a, b) => String(a.record.code || a.record.title).localeCompare(String(b.record.code || b.record.title), undefined, { numeric: true }));
   const detailContext = params.get("stage")
     ? "?stage=" + encodeURIComponent(params.get("stage")) + (documentScope ? "&documentScope=" + encodeURIComponent(documentScope) : "")
     : "";
@@ -4137,14 +4263,17 @@ function renderList(main, type, params = new URLSearchParams()) {
   const fields = [...new Set([
     "title",
     ...(definition.listFields || []),
-    ...(type === "obligation" ? ["$workQueueStatus"] : [])
+    ...(type === "obligation" ? ["$workQueueStatus"] : []),
+    ...(type === "automated-check" ? ["$lastRun"] : [])
   ])].filter((name) => name !== "title");
+  if (type === "control") fields.splice(fields.indexOf("code") + 1, 0, "area");
   const modelFields = { ...state.model.commonFields, ...definition.fields };
   const filters = Object.entries(modelFields).filter(([, field]) => field.filter).map(([name, field]) => {
     const observed = entries.flatMap(({ record }) => Array.isArray(record[name]) ? record[name] : [record[name]]).filter((value) => ["string", "number", "boolean"].includes(typeof value)).map(String);
     const values = [...new Set(observed)].sort();
     return { name, label: field.label || humanize(name), values };
   }).filter(({ values }) => values.length > 1);
+  if (type === "control") filters.unshift({ name: "area", label: "Area", values: [...CONTROL_AREAS.map(({ id }) => id), "other"].filter((id) => entries.some(({ record }) => controlAreaId(record) === id)) });
   const createButton = !state.readOnly && !definition.singleton && !collectionNeedsFirstRecord(type) && resourceCreationAllowed(type) ? '<button class="button primary" id="new-resource">New ' + esc(definition.title.toLowerCase()) + '</button>' : "";
   const hasPendingApplicability = entries.some(({ record }) => applicabilityPending(record));
   const hasStaleApplicability = entries.some(({ record }) => state.applicabilityReviewStatuses?.[record.id] === "stale");
@@ -4180,13 +4309,16 @@ function renderList(main, type, params = new URLSearchParams()) {
   const renderRows = () => {
     const query = main.querySelector("#list-search").value.toLowerCase();
     const selections = [...main.querySelectorAll(".field-filter")].filter((select) => select.value).map((select) => [select.dataset.field, select.value]);
-    const filtered = entries.filter((entry) => (!query || entrySearchText(entry).includes(query)) && selections.every(([field, expected]) => Array.isArray(entry.record[field]) ? entry.record[field].map(String).includes(expected) : String(entry.record[field] ?? "") === expected));
+    const filtered = entries.filter((entry) => (!query || entrySearchText(entry).includes(query)) && selections.every(([field, expected]) => {
+      const value = listFilterValue(type, entry.record, field);
+      return Array.isArray(value) ? value.map(String).includes(expected) : String(value ?? "") === expected;
+    }));
     const totalPages = Math.max(1, Math.ceil(filtered.length / LIST_PAGE_SIZE));
     pageNumber = Math.min(pageNumber, totalPages);
     const start = (pageNumber - 1) * LIST_PAGE_SIZE;
     const visible = filtered.slice(start, start + LIST_PAGE_SIZE);
     main.querySelector("#result-count").textContent = filtered.length + (filtered.length === 1 ? " record" : " records");
-    main.querySelector("#record-rows").innerHTML = filtered.length ? visible.map((entry) => '<tr><td data-label="' + esc(fieldLabel(type, "title")) + '" data-primary-field><a class="record-title" href="#/resource/' + encodeURIComponent(type) + '/' + encodeURIComponent(entry.record.id) + detailContext + '">' + esc(entry.record.title) + '</a></td>' + fields.map((name) => '<td data-label="' + esc(fieldLabel(type, name)) + '">' + (name === "$workQueueStatus" ? obligationWorkQueueStatus(entry.record) : formatValue(name === "status" ? type === "control" ? controlLaunchState(entry.record.id) || displayStatus(entry.record) : displayStatus(entry.record) : entry.record[name], name, type, true)) + '</td>').join("") + '<td data-label="Next action">' + recordWorkflowCell(type, entry) + '</td><td data-label="Git file"><code>' + esc(entry.relativePath.replace(/^data\//, "")) + '</code></td></tr>').join("") : '<tr><td colspan="' + (fields.length + 3) + '">' + empty(entries.length ? "No records match this filter." : collectionEmptyState(type, definition)) + '</td></tr>';
+    main.querySelector("#record-rows").innerHTML = filtered.length ? visible.map((entry) => '<tr><td data-label="' + esc(fieldLabel(type, "title")) + '" data-primary-field><a class="record-title" href="#/resource/' + encodeURIComponent(type) + '/' + encodeURIComponent(entry.record.id) + detailContext + '">' + esc(entry.record.title) + '</a></td>' + fields.map((name) => '<td data-label="' + esc(fieldLabel(type, name)) + '">' + listCell(type, entry.record, name) + '</td>').join("") + '<td data-label="Next action">' + recordWorkflowCell(type, entry) + '</td><td data-label="Git file"><code>' + esc(entry.relativePath.replace(/^data\//, "")) + '</code></td></tr>').join("") : '<tr><td colspan="' + (fields.length + 3) + '">' + empty(entries.length ? "No records match this filter." : collectionEmptyState(type, definition)) + '</td></tr>';
     pagination.hidden = totalPages === 1;
     previous.disabled = pageNumber === 1;
     next.disabled = pageNumber === totalPages;
@@ -4263,6 +4395,27 @@ function renderList(main, type, params = new URLSearchParams()) {
   if (params.get("review-collection") === "1" && !state.readOnly) {
     queueMicrotask(() => openLinkedCollectionReview(type));
   }
+}
+
+// What a list filter compares: a derived value for pseudo-fields, else the record field.
+function listFilterValue(type, record, field) {
+  if (type === "control" && field === "area") return controlAreaId(record);
+  return record[field];
+}
+
+function listCell(type, record, name) {
+  if (name === "$workQueueStatus") return obligationWorkQueueStatus(record);
+  if (name === "area" && type === "control") return esc(controlAreaLabel(controlAreaId(record)));
+  if (name === "$lastRun") {
+    const run = latestCheckResults(resourcesOfType("evidence").map(({ record: item }) => item))[record.id];
+    return run ? '<a href="#/resource/evidence/' + encodeURIComponent(run.evidenceId) + '">' + esc(formatCalendarDate(run.at.slice(0, 10))) + '</a>' : '<span class="muted">No run yet</span>';
+  }
+  if (type === "risk" && name.endsWith("Rating")) return riskRatingPill(record[name]);
+  if (name !== "status") return formatValue(record[name], name, type, true);
+  const lifecycle = type === "control" ? controlLaunchState(record.id) || displayStatus(record) : displayStatus(record);
+  const word = statusWordForRecord(type, record, { today: currentDate(), resources: state.resources.map(({ record: item }) => item) });
+  if (!word) return formatValue(lifecycle, name, type, true);
+  return '<span class="status-cell">' + statusPill(word) + '<small class="lifecycle-word">' + esc(choiceLabel(type, "status", lifecycle)) + '</small></span>';
 }
 
 // One toolbar line for list pages: search, a compact menu per filter, the
@@ -7085,13 +7238,12 @@ function bindCommon() {
   root.querySelector("[data-program-select]")?.addEventListener("change", (event) => {
     selectProgram(event.currentTarget.value);
   });
-  root.querySelectorAll(".nav-toggle, .nav-subgroup-toggle").forEach((button) => button.addEventListener("click", () => {
+  root.querySelectorAll(".sp-group-toggle, .sp-more-toggle").forEach((button) => button.addEventListener("click", () => {
     const group = button.closest(".nav-group");
     const open = group.classList.toggle("open");
     setNavigationGroupOpen(group.dataset.group, open);
     button.setAttribute("aria-expanded", String(open));
-    const label = button.closest(".nav-heading-row, .nav-subheading-row")?.querySelector(".nav-heading, .nav-subheading")?.textContent.trim() || "group";
-    button.setAttribute("aria-label", (open ? "Collapse " : "Expand ") + label);
+    if (button.classList.contains("sp-more-toggle")) button.firstChild.textContent = open ? "Fewer " : "More ";
   }));
   const navButton = root.querySelector(".mobile-nav");
   const sidebar = root.querySelector(".sidebar");
@@ -7324,6 +7476,7 @@ function groupTitle(id) { return state.model.groups.find((group) => group.id ===
 function fieldDefinition(type, name) { return state.model.resources[type]?.fields?.[name] || state.model.commonFields[name]; }
 function fieldLabel(type, name) {
   if (name === "$workQueueStatus") return "Work Queue";
+  if (name === "$lastRun") return "Last run";
   if (type === "obligation" && name === "status") return "Configuration";
   if (name === "title") return state.model.resources[type]?.titleLabel || state.model.commonFields.title.label;
   const recordContent = recordContentDefinition(type);
@@ -7333,7 +7486,7 @@ function fieldLabel(type, name) {
   return fieldDefinition(type, name)?.label || humanize(name);
 }
 function choiceLabel(type, field, value) { return fieldDefinition(type, field)?.valueLabels?.[value] || properCase(value); }
-function filterOptionLabel(value, type, field) { return state.resources.find(({ record }) => record.id === value)?.record.title || choiceLabel(type, field, value); }
+function filterOptionLabel(value, type, field) { if (type === "control" && field === "area") return controlAreaLabel(value); return state.resources.find(({ record }) => record.id === value)?.record.title || choiceLabel(type, field, value); }
 function humanize(value) { return String(value).replace(/[-_]+/g, " ").replace(/Ids?$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase()); }
 function properCase(value) { return humanize(value).replace(/\b[a-z]/g, (letter) => letter.toUpperCase()).replace(/\bSoc 2\b/g, "SOC 2"); }
 function displayStatus(record) {
@@ -7397,6 +7550,7 @@ function formatValue(value, field, type, compact = false, record = null) {
     const label = value === "active" ? "Enabled" : properCase(value);
     return '<span class="badge ' + (value === "active" ? "neutral" : "status-" + esc(String(value))) + '">' + esc(label) + '</span>';
   }
+  if (field.endsWith("Rating") && typeof value === "object") return riskRatingPill(value);
   if (field === "status" || field.endsWith("Rating") || field === "severity" || field === "outcome") return '<span class="badge status-' + esc(String(value)) + '">' + esc(choiceLabel(type, field, value)) + '</span>';
   if (Array.isArray(value) && definition?.items === "object") return formatObjectArray(value, definition.itemObjectType, compact);
   if (Array.isArray(value)) {
@@ -7414,6 +7568,11 @@ function formatValue(value, field, type, compact = false, record = null) {
   if (reference) return '<a class="tag relation" href="#/resource/' + encodeURIComponent(reference.record.type) + '/' + encodeURIComponent(reference.record.id) + '">' + esc(reference.record.title) + '</a>';
   if (definition?.type === "enum") return esc(choiceLabel(type, field, value));
   return esc(String(value));
+}
+
+function riskRatingPill(value) {
+  const rating = riskRatingDisplay(value);
+  return tonePill(rating.label + (rating.score === null ? "" : " · " + rating.score), rating.tone);
 }
 
 function formatObjectArray(items, objectType, compact = false) {
