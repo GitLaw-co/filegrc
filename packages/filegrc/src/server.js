@@ -24,7 +24,7 @@ import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
 import { auditorLinkSecretFromEnv, createAuditorView } from "./auditor-view.js";
-import { ACTION_FILTER_KEYS, actionDecisionsBranchFromEnv, actionFilters, answerRevision, canDecideAction, createActionRegister, filterActions, summarizeActions } from "./action-register.js";
+import { ACTION_FILTER_KEYS, actionDecisionsBranchFromEnv, actionFilters, answerRevision, canDecideAction, createActionRegister, filterActions, pullRequestVersions, summarizeActions } from "./action-register.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -131,7 +131,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
   const hostedAuth = options.hostedAuth ? createHostedAuth(input, options.hostedAuth) : null;
   const helpRoot = join(resolveWorkspaceRoot(input), "faq");
   const auditorView = createAuditorView(input, { secret: options.auditorSecret, now: options.now });
-  const actionRegister = createActionRegister(input, { decisionsBranch: options.actionDecisionsBranch, refreshMs: options.actionRefreshMs });
+  const actionRegister = createActionRegister(input, { decisionsBranch: options.actionDecisionsBranch, refreshMs: options.actionRefreshMs, pullRequestRepository: options.actionPullRequestRepository });
   // Locally, auditor links open on their own read-only listener, started with the
   // first link, so auditors never reach this editing server's routes. In hosted
   // mode the main server answers /auditor/ itself, behind the public URL.
@@ -1146,7 +1146,12 @@ async function actions(register, request, response, url, viewer) {
       exists: view.exists,
       people: view.people ?? [],
       allActions: view.actions,
-      actions: shown.map((action) => ({ ...action, canDecide: canDecideAction(action, viewer), answerRevision: answerRevision(action.suggestedAnswer) })),
+      actions: shown.map((action) => ({
+        ...action,
+        canDecide: canDecideAction(action, viewer),
+        answerRevision: answerRevision(action.suggestedAnswer),
+        ...(action.pullRequests ? { pullRequestVersions: pullRequestVersions(action.pullRequests) } : {})
+      })),
       filters,
       problems: view.problems,
       decided: extra.decided ?? (url.searchParams.get("decided") ? { actionId: url.searchParams.get("decided"), outcome: url.searchParams.get("outcome") } : null),
@@ -1165,7 +1170,7 @@ async function actions(register, request, response, url, viewer) {
   try {
     const outcome = { approve: "approved", done: "done", progress: "progress", feedback: "feedback", reject: "rejected" }[form.get("decision")];
     const result = await register.decide({
-      actionId: form.get("actionId"), outcome, note: form.get("note"), answerRevision: form.get("answerRevision"), viewer
+      actionId: form.get("actionId"), outcome, note: form.get("note"), answerRevision: form.get("answerRevision"), pullRequestVersions: form.get("pullRequestVersions"), viewer
     });
     console.log(`[filegrc audit] ${JSON.stringify({
       event: "action-decision", personId: viewer.personId, email: viewer.email, actionId: result.decision.actionId,
@@ -1286,6 +1291,7 @@ export async function serveWorkspace(input = process.cwd(), options = {}) {
     auditorHost: host,
     auditorSecret,
     actionDecisionsBranch: options.actionDecisionsBranch ?? actionDecisionsBranchFromEnv(options.env ?? process.env),
+    actionPullRequestRepository: options.actionPullRequestRepository,
     allowNonAuthoritativeWrites: options.allowNonAuthoritativeWrites === true,
     backgroundPushDelayMs: options.backgroundPushDelayMs,
     stateSectionDeadlineMs: options.stateSectionDeadlineMs,

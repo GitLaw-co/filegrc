@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import vm from "node:vm";
-import { answerRevision, applyPendingDecisions, actionFilters, createActionRegister, filterActions, summarizeActions } from "../src/action-register.js";
+import { actionPullRequests, answerRevision, applyPendingDecisions, actionFilters, createActionRegister, filterActions, githubRepositoryFromRemote, summarizeActions } from "../src/action-register.js";
 import { runCli } from "../src/cli.js";
 import { signSession } from "../src/hosted-auth.js";
 import { serveWorkspace } from "../src/server.js";
@@ -52,7 +52,7 @@ function action(id, fields = {}) {
 
 // A trunk-mode workspace with an action register, pushed to a bare remote whose
 // main branch the server must never move when someone decides.
-async function fixture(context, { adminEmails } = {}) {
+async function fixture(context, { adminEmails, serve = {} } = {}) {
   const parent = await mkdtemp(join(tmpdir(), "filegrc-hosted-actions-"));
   const root = join(parent, "workspace");
   const remote = join(parent, "remote.git");
@@ -88,6 +88,7 @@ async function fixture(context, { adminEmails } = {}) {
   const running = await serveWorkspace(root, {
     port: 0,
     env: {},
+    ...serve,
     hostedAuth: {
       clientId: "test-client.apps.example.com",
       clientSecret: "test-client-secret",
@@ -226,6 +227,64 @@ test("approving saves one decision file on the decisions branch and leaves main 
 
   const validation = await captureCli(runCli, ["validate", "--root", root]);
   assert.equal(validation.exitCode, 0, validation.stdout + validation.stderr);
+});
+
+test("an Approve names the version of each linked pull request and is refused once it moves", async (context) => {
+  const { root, remote, decide, page } = await fixture(context, { serve: { actionPullRequestRepository: "Example-Org/Program" } });
+  // Pull request refs live on the remote, as GitHub keeps refs/pull/<n>/head.
+  const pushHead = async (number, message) => {
+    const commit = await git(root, ["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", message]);
+    await git(root, ["push", "--force", "origin", `${commit}:refs/pull/${number}/head`]);
+    return commit;
+  };
+  await writeFile(join(root, "actions", "ACT-005.json"), json(action("ACT-005", {
+    kind: "approval",
+    links: ["https://github.com/example-org/program/pull/7", "https://github.com/other-org/elsewhere/pull/9"]
+  })));
+  await writeFile(join(root, "actions", "ACT-006.json"), json(action("ACT-006", {
+    kind: "approval",
+    links: ["https://github.com/example-org/program/pull/7/files", "https://github.com/example-org/program/pull/8"]
+  })));
+  const first = await pushHead(7, "First version");
+  const eight = await pushHead(8, "Pull request 8");
+
+  const shown = await page(OWNER);
+  const card = shown.body.slice(shown.body.indexOf('id="ACT-005"'), shown.body.indexOf('id="ACT-006"'));
+  assert.match(card, new RegExp(`This approves pull request <a href="https://github.com/example-org/program/pull/7/files"[^>]*>#7</a> at version <code>${first.slice(0, 7)}</code>`));
+  assert.match(card, new RegExp(`name="pullRequestVersions" value="7:${first}"`));
+  assert.doesNotMatch(card, /pull request <a[^>]*>#9/, "a pull request of another repository is not bound");
+
+  const second = await pushHead(7, "Second version");
+  for (const stale of [{}, { pullRequestVersions: `7:${first}` }]) {
+    const refused = await decide(OWNER, { actionId: "ACT-005", decision: "approve", answerRevision: seen("ACT-005"), ...stale });
+    assert.equal(refused.status, 409);
+    assert.match(await refused.text(), /The pull request changed since you opened this page/);
+  }
+  assert.equal((await decisionFiles(remote)).length, 0);
+
+  const approved = await decide(OWNER, { actionId: "ACT-005", decision: "approve", answerRevision: seen("ACT-005"), pullRequestVersions: `7:${second}` });
+  assert.equal(approved.status, 303, await approved.text());
+  const both = await decide(OWNER, { actionId: "ACT-006", decision: "approve", answerRevision: seen("ACT-006"), pullRequestVersions: `7:${second},8:${eight}` });
+  assert.equal(both.status, 303, await both.text());
+  const saved = await Promise.all((await decisionFiles(remote)).map(async (file) => JSON.parse(await git(remote, ["show", `${BRANCH}:${file}`]))));
+  const byAction = Object.fromEntries(saved.map((decision) => [decision.actionId, decision]));
+  assert.deepEqual(byAction["ACT-005"].pullRequest, { url: "https://github.com/example-org/program/pull/7", number: 7, headSha: second });
+  assert.equal(byAction["ACT-005"].pullRequests, undefined);
+  assert.deepEqual(byAction["ACT-006"].pullRequests, [
+    { url: "https://github.com/example-org/program/pull/7", number: 7, headSha: second },
+    { url: "https://github.com/example-org/program/pull/8", number: 8, headSha: eight }
+  ]);
+});
+
+test("pull request links are matched against the program repository", () => {
+  assert.equal(githubRepositoryFromRemote("git@github.com:GitLaw-co/compliance.git"), "gitlaw-co/compliance");
+  assert.equal(githubRepositoryFromRemote("https://github.com/GitLaw-co/compliance"), "gitlaw-co/compliance");
+  assert.equal(githubRepositoryFromRemote("ssh://git@github.com/GitLaw-co/compliance.git"), "gitlaw-co/compliance");
+  assert.equal(githubRepositoryFromRemote("/srv/remote.git"), null);
+  assert.deepEqual(actionPullRequests({ links: { "Pull request": { url: "https://github.com/GitLaw-co/compliance/pull/75" } } }, "gitlaw-co/compliance"),
+    [{ url: "https://github.com/GitLaw-co/compliance/pull/75", number: 75 }]);
+  assert.deepEqual(actionPullRequests({ links: ["https://github.com/GitLaw-co/compliance/pull/75"] }, null), []);
+  assert.deepEqual(actionPullRequests({ links: ["https://github.com/GitLaw-co/compliance/issues/75", "http://github.com/GitLaw-co/compliance/pull/75"] }, "gitlaw-co/compliance"), []);
 });
 
 test("feedback keeps the action open, reject needs a reason, and each decision is its own file", async (context) => {
