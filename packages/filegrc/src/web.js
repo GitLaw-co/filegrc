@@ -899,7 +899,7 @@ function renderHome(main) {
   const previewObligations = distinctObligationPreviews(openObligations, 3);
   const setupBanner = setupPending ? initialSetupBanner() : "";
   const auditPanel = program.evidenceReady
-    ? '<section class="panel audit-panel"><div class="panel-head"><div><p class="kicker">Optional next phase</p><h3>' + esc(activeFirm ? titleCase(activeAudit.record.title) : "Target: " + program.target.label) + '</h3></div>' + (activeAudit ? '<a href="#/resource/audit/' + encodeURIComponent(activeAudit.record.id) + '">Open audit</a>' : '<a href="#/resources/audit">Engagements</a>') + '</div>' +
+    ? '<section class="panel audit-panel"><div class="panel-head"><div><p class="kicker">Optional next phase</p><h3>' + esc(activeFirm ? activeAudit.record.title : "Target: " + program.target.label) + '</h3></div>' + (activeAudit ? '<a href="#/resource/audit/' + encodeURIComponent(activeAudit.record.id) + '">Open audit</a>' : '<a href="#/resources/audit">Engagements</a>') + '</div>' +
       (activeAudit ? auditProgress(activeAudit.record) + auditEngagementPrompt(activeAudit.record) : auditEngagementPrompt()) + '</section>'
     : "";
   const obligationPanel = state.sections?.obligations === "complete" && (program.evidenceReady || openObligations.length)
@@ -958,7 +958,7 @@ function dashboardHeader() {
   const buttons = (guide ? guideLink(guide, "button", guide.title) : "")
     + (acknowledgements ? '<a class="button" href="' + esc(acknowledgements) + '">My acknowledgements</a>' : "")
     + (document.body.dataset.actionsHref ? '<a class="button primary" href="#/actions">Open actions</a>' : "");
-  return '<div class="dash-head"><div><h2>' + esc(first ? "Hello, " + first : titleCase(program.title || state.workspace.title || "Program")) + '</h2>' + (scope && first ? '<p>' + esc(scope) + '</p>' : "") + '</div><div class="dash-head-actions">' + buttons + '</div></div>';
+  return '<div class="dash-head"><div><h2>' + esc(first ? "Hello, " + first : (program.title || state.workspace.title || "Program")) + '</h2>' + (scope && first ? '<p>' + esc(scope) + '</p>' : "") + '</div><div class="dash-head-actions">' + buttons + '</div></div>';
 }
 
 function readinessCard(readiness) {
@@ -966,7 +966,10 @@ function readinessCard(readiness) {
   const length = 2 * Math.PI * radius;
   const filled = length * readiness.percent / 100;
   const ring = '<svg class="dash-ring" viewBox="0 0 128 128" role="img" aria-label="' + readiness.percent + '% of in-scope controls implemented"><circle cx="64" cy="64" r="' + radius + '" class="dash-ring-track"></circle><circle cx="64" cy="64" r="' + radius + '" class="dash-ring-value" stroke-dasharray="' + filled.toFixed(1) + ' ' + length.toFixed(1) + '" transform="rotate(-90 64 64)"></circle><text x="64" y="70" text-anchor="middle">' + readiness.percent + '%</text></svg>';
-  const notes = [readiness.planned ? readiness.planned + " planned" : "", readiness.partial ? readiness.partial + " with gaps" : "", readiness.excluded + " not applicable"].filter(Boolean).join(" · ");
+  const launchGaps = state.sections?.program === "complete"
+    ? programControls().filter((record) => record.status === "implemented" && controlLaunchState(record.id) === "implemented-with-gaps").length
+    : 0;
+  const notes = [readiness.planned ? readiness.planned + " planned" : "", readiness.partial ? readiness.partial + " partially implemented" : "", launchGaps ? launchGaps + " implemented with launch gaps" : "", readiness.excluded + " not applicable"].filter(Boolean).join(" · ");
   return '<section class="dash-card dash-readiness">' + ring + '<div><p class="dash-label">Audit readiness</p><p class="dash-big">' + readiness.ready + ' <span>of ' + readiness.inScope + ' controls</span></p><p class="dash-note">Implemented controls ÷ controls in scope. ' + esc(notes) + '.</p><a href="#/resources/control">View controls</a></div></section>';
 }
 
@@ -1076,7 +1079,8 @@ function observationWindowStrip() {
 }
 
 function programSetupBadge() {
-  if (state.sections?.program !== "complete") return '<span class="spinner" aria-hidden="true"></span>';
+  if (state.sections?.program === "error") return '<span class="dash-setup-progress">Setup check unavailable</span>';
+  if (state.sections?.program !== "complete") return '<span class="dash-setup-progress is-loading" aria-busy="true"><span class="spinner" aria-hidden="true"></span>Checking setup…</span>';
   const progress = dashboardProgramReadiness(state.programReadiness);
   return '<span class="dash-setup-progress">' + esc(progress.label) + ' ' + progress.percent + '%<span class="dash-bar" aria-hidden="true"><span style="width:' + progress.percent + '%"></span></span></span>';
 }
@@ -2195,7 +2199,7 @@ function recordWorkflowCell(type, entry, detailContext = "") {
   const item = items[0];
   let href = workflowItemHref(item) || "#/resource/" + encodeURIComponent(type) + "/" + encodeURIComponent(entry.record.id);
   if (type === "control" && item.dependentResources?.some(({ id }) => id === entry.record.id)) {
-    return '<a class="record-workflow-action" href="' + href + '"><span class="workflow-finding-status blocked">Dependent</span><span><strong>Shared prerequisite</strong><small>' + esc(item.title) + '</small></span></a>';
+    return '<a class="record-workflow-action one-line" href="' + href + '" title="' + esc(item.title) + '"><span class="workflow-finding-status blocked">Dependent</span><strong>Shared prerequisite</strong></a>';
   }
   if (detailContext && href.startsWith("#/resource/" + encodeURIComponent(type) + "/") && !href.includes("?")) href += detailContext;
   const title = type === "control" && item.implementationState
@@ -2204,7 +2208,8 @@ function recordWorkflowCell(type, entry, detailContext = "") {
   const statusLabel = type === "control" && item.implementationState
     ? controlLaunchLabel(item.implementationState).split(":")[0]
     : properCase(item.state);
-  return '<a class="record-workflow-action" href="' + href + '"><span class="workflow-finding-status ' + esc(item.state) + '">' + esc(statusLabel) + '</span><span><strong>' + esc(title) + '</strong><small>' + esc(stagePageItemDetail(item)) + (items.length > 1 ? " +" + (items.length - 1) + " more" : "") + '</small></span></a>';
+  const more = items.length > 1 ? '<span class="more-chip" title="' + esc(items.slice(1).map((other) => other.title).join("\n")) + '">+' + (items.length - 1) + ' more</span>' : "";
+  return '<a class="record-workflow-action one-line" href="' + href + '" title="' + esc(stagePageItemDetail(item)) + '"><span class="workflow-finding-status ' + esc(item.state) + '">' + esc(statusLabel) + '</span><strong>' + esc(title) + '</strong>' + more + '</a>';
 }
 
 function openLinkedCollectionReview(type) {
@@ -3211,7 +3216,7 @@ function defaultClassificationId() {
 function sourceDeadlineCard(item, collapsed = false) {
   const href = "#/resource/" + encodeURIComponent(item.source.type) + "/" + encodeURIComponent(item.source.id);
   const owners = (item.ownerIds || []).map(formatReference).join("") || '<small>Owner not assigned</small>';
-  return '<article class="obligation-card status-' + esc(item.status) + '" data-work-source="' + esc(item.source.type + ":" + item.source.id) + '"' + (collapsed ? ' data-collapsed hidden' : "") + '><div class="obligation-card-head"><span>' + esc(state.model.resources[item.source.type]?.title || properCase(item.source.type)) + '</span><strong>' + esc(timingText(item)) + '</strong></div><h3><a href="' + href + '">' + esc(titleCase(item.title)) + '</a></h3><p>Due ' + esc(item.dueOn) + '.</p>' + (item.blockingReason ? '<p>' + esc(item.blockingReason) + '</p>' : '') + '<div class="obligation-card-foot"><div class="obligation-links">' + owners + '</div><a class="obligation-action" href="' + href + '">Review record</a></div></article>';
+  return '<article class="obligation-card status-' + esc(item.status) + '" data-work-source="' + esc(item.source.type + ":" + item.source.id) + '"' + (collapsed ? ' data-collapsed hidden' : "") + '><div class="obligation-card-head"><span>' + esc(state.model.resources[item.source.type]?.title || properCase(item.source.type)) + '</span><strong>' + esc(timingText(item)) + '</strong></div><h3><a href="' + href + '">' + esc(item.title) + '</a></h3><p>Due ' + esc(item.dueOn) + '.</p>' + (item.blockingReason ? '<p>' + esc(item.blockingReason) + '</p>' : '') + '<div class="obligation-card-foot"><div class="obligation-links">' + owners + '</div><a class="obligation-action" href="' + href + '">Review record</a></div></article>';
 }
 
 function obligationCard(item, collapsed = false) {
@@ -3242,7 +3247,7 @@ function obligationCard(item, collapsed = false) {
   const population = item.ruleId
     ? '<p><strong>' + esc(String(item.completedCount || 0)) + ' of ' + esc(String(item.expectedCount || 0)) + '</strong> expected members passed' + (item.awaitingPeriodEnd ? item.requiredCoverage?.endsOn ? '; work recorded, awaiting full period end ' + esc(item.requiredCoverage.endsOn) : '; review the required period end before reconciliation' : item.membershipFinal ? '' : item.membershipCutoffAt ? (item.awaitingPopulationCutoff ? '; work recorded, awaiting population cutoff ' : '; population remains open through ') + esc(item.membershipCutoffAt) : '; record the actual population observation date with the work') + '.</p>'
     : '';
-  return '<article class="obligation-card status-' + esc(item.status) + '" data-work-source="' + esc(type + ":" + id) + '"' + (collapsed ? ' data-collapsed hidden' : "") + '><div class="obligation-card-head"><span>' + esc(kind) + '</span><strong>' + esc(timingText(item)) + '</strong></div><h3><a href="#/resource/' + type + '/' + encodeURIComponent(id) + '">' + esc(titleCase(item.title)) + '</a></h3><p>' + esc(windowText(item)) + '</p>' + population + (item.timingIssue ? '<p>' + esc(item.timingIssue) + '</p>' : '') + '<div class="obligation-card-foot"><div class="obligation-links">' + (item.policyIds || []).map(formatReference).join("") + '</div>' + action + '</div></article>';
+  return '<article class="obligation-card status-' + esc(item.status) + '" data-work-source="' + esc(type + ":" + id) + '"' + (collapsed ? ' data-collapsed hidden' : "") + '><div class="obligation-card-head"><span>' + esc(kind) + '</span><strong>' + esc(timingText(item)) + '</strong></div><h3><a href="#/resource/' + type + '/' + encodeURIComponent(id) + '">' + esc(item.title) + '</a></h3><p>' + esc(windowText(item)) + '</p>' + population + (item.timingIssue ? '<p>' + esc(item.timingIssue) + '</p>' : '') + '<div class="obligation-card-foot"><div class="obligation-links">' + (item.policyIds || []).map(formatReference).join("") + '</div>' + action + '</div></article>';
 }
 
 function actionCompletionPlan(item) {
@@ -4255,6 +4260,14 @@ function renderList(main, type, params = new URLSearchParams()) {
     !documentScope || (documentScope === "audit") === auditSpecificDocument(record)
   ));
   if (type === "control") entries.sort((a, b) => String(a.record.code || a.record.title).localeCompare(String(b.record.code || b.record.title), undefined, { numeric: true }));
+  if (type === "automated-check") {
+    const order = { failing: 0, "not-monitored": 1, passing: 2 };
+    const rank = (record) => order[recordStatusWord(type, record)] ?? 3;
+    entries.sort((a, b) => rank(a.record) - rank(b.record) || a.record.title.localeCompare(b.record.title));
+  }
+  const evidenceView = type === "evidence" ? evidenceViewFor(params) : null;
+  if (evidenceView === "checks") return renderCheckRunEvidence(main, params);
+  if (evidenceView === "other") entries.splice(0, entries.length, ...entries.filter(({ record }) => !isCheckRun(record)));
   const detailContext = params.get("stage")
     ? "?stage=" + encodeURIComponent(params.get("stage")) + (documentScope ? "&documentScope=" + encodeURIComponent(documentScope) : "")
     : "";
@@ -4299,7 +4312,7 @@ function renderList(main, type, params = new URLSearchParams()) {
   main.innerHTML = '<div class="page"><div class="page-intro"><div><p class="kicker">' + esc(listStage?.title || groupTitle(definition.group)) + '</p><div class="page-title-line"><h2>' + esc(titleCase(listTitle)) + '</h2>' + guideTrigger + '</div><p>' + esc(pageSummary) + '</p></div>' + listTools + '</div>' + filterBar + resourceGuide(type, relatedGuidance) +
     collectionReviewPanel(type) +
     (type === "control" ? workflowGuidance({ type, title: "Next steps" }) : "") +
-    '<section class="record-table-wrap"><table class="record-table"><thead><tr><th>' + esc(fieldLabel(type, "title")) + '</th>' + fields.map((name) => '<th>' + esc(fieldLabel(type, name)) + '</th>').join("") + '<th>Next action</th><th>Git file</th></tr></thead><tbody id="record-rows"></tbody></table></section>' +
+    (type === "evidence" ? evidenceTabs(evidenceView) : "") + '<section class="record-table-wrap"><table class="record-table"><thead><tr><th>' + esc(fieldLabel(type, "title")) + '</th>' + fields.map((name) => '<th>' + esc(fieldLabel(type, name)) + '</th>').join("") + '<th>Next action</th><th>Git file</th></tr></thead><tbody id="record-rows"></tbody></table></section>' +
     '<nav class="pagination list-pagination" aria-label="' + esc(definition.pluralTitle) + ' pages" hidden><button class="button" type="button" data-page="previous">Previous</button><span class="page-status" aria-live="polite"></span><button class="button" type="button" data-page="next">Next</button></nav></div>';
   resourceGuideCleanup = setupResourceGuide(main);
   const pagination = main.querySelector(".list-pagination");
@@ -4318,7 +4331,7 @@ function renderList(main, type, params = new URLSearchParams()) {
     const start = (pageNumber - 1) * LIST_PAGE_SIZE;
     const visible = filtered.slice(start, start + LIST_PAGE_SIZE);
     main.querySelector("#result-count").textContent = filtered.length + (filtered.length === 1 ? " record" : " records");
-    main.querySelector("#record-rows").innerHTML = filtered.length ? visible.map((entry) => '<tr><td data-label="' + esc(fieldLabel(type, "title")) + '" data-primary-field><a class="record-title" href="#/resource/' + encodeURIComponent(type) + '/' + encodeURIComponent(entry.record.id) + detailContext + '">' + esc(entry.record.title) + '</a></td>' + fields.map((name) => '<td data-label="' + esc(fieldLabel(type, name)) + '">' + listCell(type, entry.record, name) + '</td>').join("") + '<td data-label="Next action">' + recordWorkflowCell(type, entry) + '</td><td data-label="Git file"><code>' + esc(entry.relativePath.replace(/^data\//, "")) + '</code></td></tr>').join("") : '<tr><td colspan="' + (fields.length + 3) + '">' + empty(entries.length ? "No records match this filter." : collectionEmptyState(type, definition)) + '</td></tr>';
+    main.querySelector("#record-rows").innerHTML = filtered.length ? visible.map((entry) => '<tr><td data-label="' + esc(fieldLabel(type, "title")) + '" data-primary-field><a class="record-title" href="#/resource/' + encodeURIComponent(type) + '/' + encodeURIComponent(entry.record.id) + detailContext + '">' + esc(entry.record.title) + '</a></td>' + fields.map((name) => '<td data-label="' + esc(fieldLabel(type, name)) + '">' + listCell(type, entry.record, name) + '</td>').join("") + '<td data-label="Next action">' + recordWorkflowCell(type, entry) + '</td><td data-label="Git file"><code>' + esc(entry.relativePath.replace(/^data\//, "")) + '</code><a class="row-open" href="#/resource/' + encodeURIComponent(type) + '/' + encodeURIComponent(entry.record.id) + detailContext + '" tabindex="-1" aria-hidden="true">Open</a></td></tr>').join("") : '<tr><td colspan="' + (fields.length + 3) + '">' + (entries.length ? empty("No records match this filter.") : collectionEmptyBlock(type, definition)) + '</td></tr>';
     pagination.hidden = totalPages === 1;
     previous.disabled = pageNumber === 1;
     next.disabled = pageNumber === totalPages;
@@ -4333,6 +4346,7 @@ function renderList(main, type, params = new URLSearchParams()) {
     const next = new URLSearchParams();
     if (params.get("stage")) next.set("stage", params.get("stage"));
     if (documentScope) next.set("documentScope", documentScope);
+    if (evidenceView) next.set("view", evidenceView);
     if (parseRoute().params.get("review-collection") === "1") next.set("review-collection", "1");
     const query = main.querySelector("#list-search").value.trim();
     if (query) next.set("q", query);
@@ -4364,6 +4378,8 @@ function renderList(main, type, params = new URLSearchParams()) {
   main.querySelector("#new-resource")?.addEventListener("click", () => openEditor(type));
   main.querySelector("[data-suggest-change]")?.addEventListener("click", () => openSuggestChangeDialog(type));
   main.querySelector("#record-rows").addEventListener("click", (event) => {
+    if (event.target.closest("[data-empty-new]")) openEditor(type);
+    if (event.target.closest("[data-empty-suggest]")) openSuggestChangeDialog(type);
     if (event.target.closest("[data-load-workflow]")) loadStateSection("workflow");
   });
   main.querySelector("#review-applicability")?.addEventListener("click", () => openApplicabilityReviewDialog(type, entries));
@@ -4398,6 +4414,52 @@ function renderList(main, type, params = new URLSearchParams()) {
 }
 
 // What a list filter compares: a derived value for pseudo-fields, else the record field.
+function evidenceViewFor(params) {
+  const view = params.get("view");
+  if (["checks", "other", "all"].includes(view)) return view;
+  return resourcesOfType("evidence").some(({ record }) => isCheckRun(record)) ? "checks" : "all";
+}
+
+function evidenceTabs(view) {
+  const all = resourcesOfType("evidence").map(({ record }) => record);
+  const runs = all.filter(isCheckRun);
+  const checks = new Set(runs.flatMap((record) => record.sourceResourceIds.filter((id) => String(id).startsWith("automated-check-"))));
+  const tab = (id, label, count) => '<a role="tab" href="#/resources/evidence?view=' + id + '" aria-selected="' + (view === id) + '">' + esc(label) + ' <span class="tab-count">' + count + '</span></a>';
+  return '<div role="tablist" class="list-tabs" aria-label="Evidence views">' + tab("checks", "Check runs", checks.size) + tab("other", "Other evidence", all.length - runs.length) + tab("all", "All artifacts", all.length) + '</div>';
+}
+
+// Check runs collapse to one row per check: how many runs, the last result and when.
+function renderCheckRunEvidence(main, params) {
+  const runs = resourcesOfType("evidence").map(({ record }) => record).filter(isCheckRun);
+  const byCheck = new Map();
+  for (const run of runs) for (const id of run.sourceResourceIds.filter((item) => String(item).startsWith("automated-check-"))) {
+    if (!byCheck.has(id)) byCheck.set(id, []);
+    byCheck.get(id).push(run);
+  }
+  const latest = latestCheckResults(runs);
+  const rows = [...byCheck.entries()].map(([id, items]) => {
+    const check = state.resources.find(({ record }) => record.id === id)?.record;
+    const word = latest[id] ? (latest[id].result === "passed" ? "passing" : "failing") : "not-monitored";
+    return { id, check, items, word, last: latest[id] };
+  }).sort((a, b) => (a.word === "failing" ? 0 : 1) - (b.word === "failing" ? 0 : 1) || String(a.check?.title || a.id).localeCompare(String(b.check?.title || b.id)));
+  const definition = state.model.resources.evidence;
+  main.innerHTML = '<div class="page"><div class="page-intro"><div><p class="kicker">Compliance</p><div class="page-title-line"><h2>' + esc(definition.pluralTitle) + '</h2></div><p>Each nightly run of an automated check is one Evidence Artifact. They are grouped here by check; open a check for its night-by-night results.</p></div></div>' + evidenceTabs("checks")
+    + '<section class="record-table-wrap"><table class="record-table"><thead><tr><th>Check</th><th>Last result</th><th>Last run</th><th>Runs</th><th>Last 14 nights</th></tr></thead><tbody>'
+    + (rows.length ? rows.map((row) => '<tr><td data-label="Check" data-primary-field>' + (row.check ? '<a class="record-title" href="#/resource/automated-check/' + encodeURIComponent(row.id) + '">' + esc(row.check.title) + '</a>' : esc(row.id)) + '</td><td data-label="Last result">' + statusPill(row.word) + '</td><td data-label="Last run">' + (row.last ? '<a href="#/resource/evidence/' + encodeURIComponent(row.last.evidenceId) + '">' + esc(formatCalendarDate(row.last.at.slice(0, 10))) + '</a>' : "") + '</td><td data-label="Runs">' + row.items.length + '</td><td data-label="Last 14 nights">' + runStrip(checkRuns(row.id), 14) + '</td></tr>').join("") : '<tr><td colspan="5">' + empty("No check runs are recorded.") + '</td></tr>')
+    + '</tbody></table></section></div>';
+}
+
+// The empty state for a record list: what the record is for and how to add one.
+function collectionEmptyBlock(type, definition) {
+  const plural = definition.pluralTitle.toLowerCase();
+  const purpose = String(definition.description || "").split(/(?<=\.)\s/)[0];
+  const guidance = collectionEmptyState(type, definition);
+  const action = !state.readOnly && !definition.singleton && resourceCreationAllowed(type)
+    ? '<button class="button primary" type="button" data-empty-new>New ' + esc(definition.title.toLowerCase()) + '</button>'
+    : document.body.dataset.suggestHref ? '<button class="button" type="button" data-empty-suggest>Suggest a change</button>' : "";
+  return '<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M8 8.5h8M8 12.5h8M8 16.5h5"/></svg><h3>No ' + esc(plural) + ' yet</h3><p>' + esc(purpose) + '</p>' + (guidance && !guidance.startsWith("No records exist. Use the page guidance") ? '<p class="empty-guidance">' + esc(guidance) + '</p>' : "") + action + '</div>';
+}
+
 function listFilterValue(type, record, field) {
   if (type === "control" && field === "area") return controlAreaId(record);
   return record[field];
@@ -4413,7 +4475,7 @@ function listCell(type, record, name) {
   if (type === "risk" && name.endsWith("Rating")) return riskRatingPill(record[name]);
   if (name !== "status") return formatValue(record[name], name, type, true);
   const lifecycle = type === "control" ? controlLaunchState(record.id) || displayStatus(record) : displayStatus(record);
-  const word = statusWordForRecord(type, record, { today: currentDate(), resources: state.resources.map(({ record: item }) => item) });
+  const word = recordStatusWord(type, record);
   if (!word) return formatValue(lifecycle, name, type, true);
   return '<span class="status-cell">' + statusPill(word) + '<small class="lifecycle-word">' + esc(choiceLabel(type, "status", lifecycle)) + '</small></span>';
 }
@@ -4606,7 +4668,7 @@ function renderDetail(main, type, id, params = new URLSearchParams()) {
   const collectionHref = scheduleContext ? "#/retention-schedule" : policiesContext ? "#/policies" : "#/resources/" + encodeURIComponent(type);
   const collectionLabel = scheduleContext ? "Data Retention Schedule" : policiesContext ? "Policies" : titleCase(definition.pluralTitle);
   if (entry.detailsLoaded === false) {
-    main.innerHTML = '<div class="page"><div class="detail-head"><div><div class="breadcrumbs header-breadcrumbs"><a href="' + collectionHref + '">' + esc(collectionLabel) + '</a><span>/</span><span>' + esc(entry.record.title) + '</span></div><h2>' + esc(titleCase(entry.record.title)) + '</h2></div></div><section class="panel detail-loading is-loading" role="status" aria-live="polite" aria-busy="true">' + loadingIndicator("Loading record…") + '</section></div>';
+    main.innerHTML = '<div class="page"><div class="detail-head"><div><div class="breadcrumbs header-breadcrumbs"><a href="' + collectionHref + '">' + esc(collectionLabel) + '</a><span>/</span><span>' + esc(entry.record.title) + '</span></div><h2>' + esc(entry.record.title) + '</h2></div></div><section class="panel detail-loading is-loading" role="status" aria-live="polite" aria-busy="true">' + loadingIndicator("Loading record…") + '</section></div>';
     loadResourceDetail(type, id);
     return;
   }
@@ -4715,8 +4777,9 @@ function renderDetail(main, type, id, params = new URLSearchParams()) {
     ? '<a class="button" href="#/resources/' + encodeURIComponent(type) + '?review=1">' + (applicabilityStatus === "stale" ? "Reconfirm" : "Review") + ' applicability</a>'
     : "";
   const recordMenu = '<details class="record-overflow"><summary aria-label="More record actions" title="More record actions"><svg viewBox="0 0 18 4" aria-hidden="true"><circle cx="2" cy="2" r="2"></circle><circle cx="9" cy="2" r="2"></circle><circle cx="16" cy="2" r="2"></circle></svg></summary><div class="record-overflow-menu" aria-label="Record actions"><button type="button" data-record-modal="info">Record info</button><button type="button" data-record-modal="connections">Connections</button><button type="button" data-record-modal="history"' + (entry.historyLoaded === false ? ' disabled' : '') + '>File history' + (entry.historyLoaded === false ? ' (loading)' : '') + '</button>' + (mayDelete ? '<div class="record-overflow-separator"></div><button class="danger-text" type="button" data-delete-resource>Delete record</button>' : '') + '</div></details>';
-  main.innerHTML = '<div class="page"><div class="detail-head"><div><div class="breadcrumbs header-breadcrumbs"><a href="' + collectionHref + '">' + esc(collectionLabel) + '</a><span>/</span><span>' + esc(entry.record.title) + '</span></div><h2>' + esc(titleCase(entry.nonmaterialView?.record.title || entry.record.title)) + '</h2></div><div class="actions">' + reportingRouteSetActions + periodImpactAction + ruleWithdrawalAction + ruleCorrectionAction + amendmentAction + retentionApplicationAction + auditCycleAction + auditPopulationCorrectionAction + (type === "audit" ? '<a class="button primary" href="#/audit-packet?auditId=' + encodeURIComponent(entry.record.id) + '">Audit Evidence &amp; Packet</a>' : "") + governanceActions + lifecycleActions + issueActions + applicabilityAction + addRecordContentAction + (!state.readOnly && !routeSetLocked && !withdrawnRuleLocked ? '<button class="button" id="edit-resource">Edit</button>' : "") + suggestChangeButton() + recordMenu + '</div></div>' + amendmentPanel + periodImpactPanel + ruleWithdrawalPanel + '<div class="detail-grid ' + (hasRecordBody ? "" : "detail-grid-structured") + (type === "control" ? " detail-control" : "") + '">' + detailMain + supportPanels + (hasStructuredMetadata ? recordFieldsPanel : "") + '</div></div>';
+  main.innerHTML = '<div class="page"><div class="detail-head"><div><div class="breadcrumbs header-breadcrumbs"><a href="' + collectionHref + '">' + esc(collectionLabel) + '</a><span>/</span><span>' + esc(entry.record.title) + '</span></div><h2>' + esc(entry.nonmaterialView?.record.title || entry.record.title) + '</h2>' + recordHeadStatus(type, entry.record) + '</div><div class="actions">' + reportingRouteSetActions + periodImpactAction + ruleWithdrawalAction + ruleCorrectionAction + amendmentAction + retentionApplicationAction + auditCycleAction + auditPopulationCorrectionAction + (type === "audit" ? '<a class="button primary" href="#/audit-packet?auditId=' + encodeURIComponent(entry.record.id) + '">Audit Evidence &amp; Packet</a>' : "") + governanceActions + lifecycleActions + issueActions + applicabilityAction + addRecordContentAction + (!state.readOnly && !routeSetLocked && !withdrawnRuleLocked ? '<button class="button" id="edit-resource">Edit</button>' : "") + suggestChangeButton() + recordMenu + '</div></div>' + recordSummary(type, entry, params) + amendmentPanel + periodImpactPanel + ruleWithdrawalPanel + '<div class="detail-grid ' + (hasRecordBody ? "" : "detail-grid-structured") + (type === "control" ? " detail-control" : "") + '">' + detailMain + supportPanels + (hasStructuredMetadata ? recordFieldsPanel : "") + '</div></div>';
   main.querySelectorAll("[data-completion-requirements]").forEach((button) => button.addEventListener("click", () => openCompletionRequirementsDialog(button.dataset.completionRequirements)));
+  wireRecordTabs(main, type, id);
   main.querySelector("[data-review-period-impact]")?.addEventListener("click", () => openPeriodImpactReview(entry.record.id));
   main.querySelector("[data-withdraw-obligation-rule]")?.addEventListener("click", () => openObligationRuleWithdrawal(entry.record.id));
   main.querySelector("[data-correct-obligation-rule]")?.addEventListener("click", () => openObligationRuleCorrection(entry.record.id));
@@ -4889,6 +4952,145 @@ function renderDetail(main, type, id, params = new URLSearchParams()) {
     history.replaceState(null, "", "#/resource/" + encodeURIComponent(type) + "/" + encodeURIComponent(id));
     queueMicrotask(() => main.querySelector("#edit-resource")?.click());
   }
+}
+
+// The status word and lifecycle word shown beside a record's title.
+function recordHeadStatus(type, record) {
+  const word = recordStatusWord(type, record);
+  return word ? '<div class="record-head-status">' + statusPill(word) + '<small class="lifecycle-word">' + esc(choiceLabel(type, "status", displayStatus(record))) + '</small></div>' : "";
+}
+
+// statusWordForRecord, except that an implemented Control whose launch checks still
+// show gaps reads Critical rather than Passing.
+function recordStatusWord(type, record) {
+  if (type === "control" && record.status === "implemented" && controlLaunchState(record.id) === "implemented-with-gaps") return "critical";
+  return statusWordForRecord(type, record, { today: currentDate(), resources: state.resources.map(({ record: item }) => item) });
+}
+
+function checkRuns(checkId) {
+  return checkRunHistory(resourcesOfType("evidence").map(({ record }) => record), checkId);
+}
+
+// One dot per night: green passed, red failed, grey no run. Each dot links to that
+// night's Evidence Artifact.
+function runStrip(runs, nights = 30) {
+  return '<div class="run-strip">' + nightlyRuns(runs, currentDate(), nights).map(({ day, run }) => {
+    const label = formatCalendarDate(day) + ": " + (run ? run.result : "no run");
+    return run
+      ? '<a class="run-dot tone-' + (run.result === "passed" ? "green" : "red") + '" href="#/resource/evidence/' + encodeURIComponent(run.id) + '" title="' + esc(label) + '" aria-label="' + esc(label) + '"></a>'
+      : '<span class="run-dot tone-grey" title="' + esc(label) + '" aria-label="' + esc(label) + '"></span>';
+  }).join("") + '</div>';
+}
+
+function recordSummary(type, entry, params) {
+  if (type === "automated-check") return checkSummary(entry.record);
+  if (type === "control") return controlSummary(entry.record, params);
+  if (type === "risk") return riskSummary(entry.record);
+  if (type === "vendor") return vendorSummary(entry.record);
+  return "";
+}
+
+function checkSummary(record) {
+  const runs = checkRuns(record.id);
+  const last = runs.at(-1);
+  const recent = runs.filter((run) => run.at.slice(0, 10) >= isoDatePlusDays(currentDate(), -29));
+  const passed = recent.filter((run) => run.result === "passed").length;
+  const failed = recent.length - passed;
+  const facts = [last ? "Last run " + formatLocalDateTime(last.at) : "No run recorded yet", record.cadence ? properCase(record.cadence) : ""].filter(Boolean).join(" · ");
+  return '<section class="panel record-summary"><div class="summary-row"><span class="summary-facts">' + esc(facts) + '</span></div>'
+    + (record.expectedCondition ? '<p class="passes-when"><strong>Passes when</strong> ' + esc(record.expectedCondition) + '</p>' : "")
+    + '<div class="run-strip-head"><h3>Last 30 nights</h3><span>' + passed + ' passed · ' + failed + ' failed · ' + (30 - recent.length) + ' without a run</span></div>' + runStrip(runs)
+    + ((record.controlIds || []).length ? '<div class="summary-chips"><span class="summary-label">Controls</span>' + record.controlIds.map(formatReference).join(" ") + '</div>' : "")
+    + '</section>';
+}
+
+function controlSummary(record, params) {
+  const latest = latestCheckResults(resourcesOfType("evidence").map(({ record: item }) => item));
+  const checks = resourcesOfType("automated-check").map(({ record: item }) => item).filter((item) => (item.controlIds || []).includes(record.id));
+  const manual = resourcesOfType("evidence").map(({ record: item }) => item).filter((item) => (item.controlIds || []).includes(record.id) && !(item.sourceResourceIds || []).some((id) => String(id).startsWith("automated-check-")));
+  const requirements = (record.requirementIds || []).map((id) => state.resources.find(({ record: item }) => item.id === id)?.record).filter(Boolean);
+  const risks = resourcesOfType("risk").map(({ record: item }) => item).filter((item) => (item.controlIds || []).includes(record.id));
+  const policies = (record.policyIds || []).map((id) => state.resources.find(({ record: item }) => item.id === id)?.record).filter(Boolean);
+  const link = (item) => '<a href="#/resource/' + encodeURIComponent(item.type) + '/' + encodeURIComponent(item.id) + '">' + esc(item.title) + '</a>';
+  const checksBody = (checks.length
+    ? '<table class="summary-table"><thead><tr><th>Check</th><th>Last result</th><th>Last run</th><th>Last 14 nights</th></tr></thead><tbody>' + checks.map((check) => {
+      const run = latest[check.id];
+      return '<tr><td>' + link(check) + '</td><td>' + statusPill(automatedCheckStatusWord(check, latest) || "not-monitored") + '</td><td>' + (run ? esc(formatCalendarDate(run.at.slice(0, 10))) : '<span class="muted">No run yet</span>') + '</td><td>' + runStrip(checkRuns(check.id), 14) + '</td></tr>';
+    }).join("") + '</tbody></table>'
+    : '<p class="muted">No automated check is linked to this control.</p>')
+    + (manual.length ? '<h4>Other evidence</h4><ul class="summary-list">' + manual.map((item) => '<li>' + link(item) + '<small>' + esc([item.artifactKind ? properCase(item.artifactKind) : "", item.collectedOn ? formatCalendarDate(item.collectedOn) : ""].filter(Boolean).join(" · ")) + '</small></li>').join("") + '</ul>' : "");
+  const criteriaBody = requirements.length
+    ? '<div class="criteria-chips">' + requirements.map((item) => '<a class="criteria-chip" href="#/resource/requirement/' + encodeURIComponent(item.id) + '" title="' + esc(item.description || item.title) + '">' + esc(item.reference || item.title) + '</a>').join("") + '</div>'
+    : '<p class="muted">No criteria are mapped.</p>';
+  const risksBody = risks.length
+    ? '<table class="summary-table"><thead><tr><th>Risk</th><th>Inherent</th><th>Residual</th><th>Treatment</th></tr></thead><tbody>' + risks.map((risk) => '<tr><td>' + link(risk) + '</td><td>' + riskRatingPill(risk.inherentRating) + '</td><td>' + riskRatingPill(risk.residualRating) + '</td><td>' + esc(choiceLabel("risk", "response", risk.response)) + '</td></tr>').join("") + '</tbody></table>'
+    : '<p class="muted">No risk names this control.</p>';
+  const policiesBody = policies.length
+    ? '<ul class="summary-list">' + policies.map((item) => '<li>' + link(item) + statusPill(governedStatusWord(item)) + '</li>').join("") + '</ul>'
+    : '<p class="muted">No policy is linked.</p>';
+  const tabs = [
+    ["checks", "Checks and evidence", checks.length + manual.length, checksBody],
+    ["criteria", "Criteria", requirements.length, criteriaBody],
+    ["risks", "Risks mitigated", risks.length, risksBody],
+    ["policies", "Policies", policies.length, policiesBody]
+  ];
+  return recordTabs(tabs, params.get("tab"));
+}
+
+function recordTabs(tabs, requested) {
+  const selected = tabs.some(([id]) => id === requested) ? requested : tabs[0][0];
+  return '<section class="panel record-summary record-tabs"><div role="tablist" aria-label="Record sections">' + tabs.map(([id, label, count]) => '<button type="button" role="tab" id="record-tab-' + id + '" aria-controls="record-panel-' + id + '" aria-selected="' + (id === selected) + '" data-record-tab="' + id + '">' + esc(label) + ' <span class="tab-count">' + count + '</span></button>').join("") + '</div>'
+    + tabs.map(([id, , , body]) => '<div role="tabpanel" id="record-panel-' + id + '" aria-labelledby="record-tab-' + id + '"' + (id === selected ? "" : " hidden") + '>' + body + '</div>').join("") + '</section>';
+}
+
+// Tabs keep their choice in the URL (?tab=), so a link opens the same section.
+function wireRecordTabs(main, type, id) {
+  main.querySelectorAll("[data-record-tab]").forEach((tab) => tab.addEventListener("click", () => {
+    main.querySelectorAll("[data-record-tab]").forEach((other) => {
+      const active = other === tab;
+      other.setAttribute("aria-selected", String(active));
+      main.querySelector("#record-panel-" + other.dataset.recordTab).hidden = !active;
+    });
+    const params = new URLSearchParams(parseRoute().params);
+    params.set("tab", tab.dataset.recordTab);
+    history.replaceState(null, "", "#/resource/" + encodeURIComponent(type) + "/" + encodeURIComponent(id) + "?" + params);
+  }));
+}
+
+function riskSummary(record) {
+  const owners = (record.ownerIds || []).map(referenceTitle).join(", ") || "Not set";
+  const rated = (value) => value && !/^not rated$/i.test(String(value).trim());
+  const factor = (rating) => {
+    if (!rating || typeof rating !== "object") return "";
+    if (!rated(rating.likelihood) && !rated(rating.impact)) return '<small class="summary-sub">Likelihood and impact not rated</small>';
+    return '<small class="summary-sub">Likelihood ' + esc(rated(rating.likelihood) ? rating.likelihood : "not rated") + ' · Impact ' + esc(rated(rating.impact) ? rating.impact : "not rated") + '</small>';
+  };
+  const cell = (label, value) => '<div class="summary-cell"><span class="summary-label">' + esc(label) + '</span>' + value + '</div>';
+  return '<section class="panel record-summary summary-strip">'
+    + cell("Owner", esc(owners))
+    + cell("Category", esc((record.categories || []).join(", ") || "Not set"))
+    + cell("Inherent", riskRatingPill(record.inherentRating) + factor(record.inherentRating))
+    + cell("Residual", riskRatingPill(record.residualRating) + factor(record.residualRating))
+    + cell("Treatment", esc(record.response ? choiceLabel("risk", "response", record.response) : "Not set"))
+    + '</section>';
+}
+
+function vendorSummary(record) {
+  const levels = ["low", "medium", "high"];
+  const level = levels.indexOf(record.criticality);
+  const bar = '<div class="criticality-bar" role="img" aria-label="Criticality: ' + esc(record.criticality || "not set") + '">' + levels.map((name, index) => '<span class="seg seg-' + name + (index === level ? " on" : "") + '">' + esc(properCase(name)) + '</span>').join("") + '</div>';
+  const reviews = resourcesOfType("vendor-review").map(({ record: item }) => item).filter((item) => item.vendorId === record.id)
+    .sort((a, b) => String(b.scheduledFor || b.completedOn || "").localeCompare(String(a.scheduledFor || a.completedOn || "")));
+  const today = currentDate();
+  const reviewWord = (item) => item.status === "complete" ? "passing" : ["planned", "in-progress"].includes(item.status) ? (item.scheduledFor && item.scheduledFor < today ? "failing" : "due-soon") : null;
+  const review = reviews[0];
+  const reviewBlock = review
+    ? '<div class="vendor-review-block"><div class="summary-row"><a href="#/resource/vendor-review/' + encodeURIComponent(review.id) + '"><strong>' + esc(review.title) + '</strong></a>' + statusPill(reviewWord(review)) + '</div><small>' + esc([choiceLabel("vendor-review", "status", review.status), review.scheduledFor ? "scheduled " + formatCalendarDate(review.scheduledFor) : "", review.completedOn ? "completed " + formatCalendarDate(review.completedOn) : "", (review.reviewerIds || []).length ? "reviewer " + review.reviewerIds.map(referenceTitle).join(", ") : ""].filter(Boolean).join(" · ")) + '</small>' + (reviews.length > 1 ? '<small>' + (reviews.length - 1) + ' earlier ' + pluralize("review", reviews.length - 1) + '</small>' : "") + '</div>'
+    : '<p class="muted">No vendor review is recorded.</p>';
+  const banner = record.criticality === "high" && record.status === "active" && reviewWord(review || {}) !== "passing"
+    ? '<p class="summary-banner" role="note"><strong>Review required.</strong> High-criticality vendors need a completed review' + (review?.scheduledFor ? ' (scheduled ' + esc(formatCalendarDate(review.scheduledFor)) + ')' : "") + '.</p>'
+    : "";
+  return '<section class="panel record-summary">' + banner + '<div class="summary-grid"><div><span class="summary-label">Criticality</span>' + bar + '</div><div><span class="summary-label">Review</span>' + reviewBlock + '</div></div></section>';
 }
 
 function renderDetailSupport({ hasRecordBody, workflowPanel, metadataPanel, attachmentPanel }) {
@@ -6310,7 +6512,7 @@ function openEditor(type, entry = null, options = {}) {
     || implementationEditorDescription(type)
     || conciseResourceDescription(definition)
     || "Fill the core fields below. Git will record the author, time, reason, and diff when you commit this file.";
-  dialog.innerHTML = '<form><div class="dialog-head"><div><p class="kicker">' + (entry ? "Edit record" : options.actionCompletion ? "Complete assigned work" : options.obligationCompletion ? "Record obligation work" : "Create record") + '</p><h2 id="resource-editor-title">' + esc(titleCase(entry?.record.title || record.title || definition.title)) + '</h2></div><button type="button" class="icon-button" data-editor-dismiss aria-label="Close">×</button></div><p>' + esc(editorDescription) + '</p>' + approvedRetentionRulePanel(options.approvedRule) + resourceReviewCriteria(type, true) + (options.occurrenceReview ? occurrenceMemberReview(record, options.membershipFinal, options.periodFinal) : "") + '<div class="form-grid">' + names.map((name) => editorField(type, name, fields[name], record[name], required.has(name) || conditionMatches(record, fields[name].requiredWhen), Boolean(entry), oneOf.has(name), activeOneOf.has(name), record.id)).join("") + '</div>' +
+  dialog.innerHTML = '<form><div class="dialog-head"><div><p class="kicker">' + (entry ? "Edit record" : options.actionCompletion ? "Complete assigned work" : options.obligationCompletion ? "Record obligation work" : "Create record") + '</p><h2 id="resource-editor-title">' + esc(entry?.record.title || record.title || definition.title) + '</h2></div><button type="button" class="icon-button" data-editor-dismiss aria-label="Close">×</button></div><p>' + esc(editorDescription) + '</p>' + approvedRetentionRulePanel(options.approvedRule) + resourceReviewCriteria(type, true) + (options.occurrenceReview ? occurrenceMemberReview(record, options.membershipFinal, options.periodFinal) : "") + '<div class="form-grid">' + names.map((name) => editorField(type, name, fields[name], record[name], required.has(name) || conditionMatches(record, fields[name].requiredWhen), Boolean(entry), oneOf.has(name), activeOneOf.has(name), record.id)).join("") + '</div>' +
     activeMarkdown.map((markdown) => {
       const generated = !entry?.content?.[markdown.name];
       const source = entry?.content?.[markdown.name]?.source
@@ -7198,7 +7400,7 @@ function openContentEditor(entry, name) {
   const dialog = document.createElement("dialog");
   dialog.className = "editor content-dialog";
   dialog.setAttribute("aria-labelledby", "content-editor-title");
-  dialog.innerHTML = '<form method="dialog"><div class="dialog-head"><div><p class="kicker">Edit Markdown</p><h2 id="content-editor-title">' + esc(titleCase(entry.record.title)) + '</h2></div><button value="cancel" class="icon-button" aria-label="Close">×</button></div><p><code>' + esc(item.path) + '</code></p><textarea class="markdown-source" spellcheck="true" aria-label="Markdown content">' + esc(item.source) + '</textarea><div class="dialog-error" role="alert"></div><div class="save-status" role="status" aria-live="polite"></div><div class="dialog-actions"><button value="cancel" class="button">Cancel</button><button type="button" class="button primary" id="save-content">Save Markdown</button></div></form>';
+  dialog.innerHTML = '<form method="dialog"><div class="dialog-head"><div><p class="kicker">Edit Markdown</p><h2 id="content-editor-title">' + esc(entry.record.title) + '</h2></div><button value="cancel" class="icon-button" aria-label="Close">×</button></div><p><code>' + esc(item.path) + '</code></p><textarea class="markdown-source" spellcheck="true" aria-label="Markdown content">' + esc(item.source) + '</textarea><div class="dialog-error" role="alert"></div><div class="save-status" role="status" aria-live="polite"></div><div class="dialog-actions"><button value="cancel" class="button">Cancel</button><button type="button" class="button primary" id="save-content">Save Markdown</button></div></form>';
   document.body.append(dialog);
   dialog.showModal();
   const repositoryPrefetch = prefetchRepositoryForReview(dialog.querySelector(".save-status"));
@@ -7274,11 +7476,18 @@ function bindCommon() {
       // Browser storage may be unavailable; navigation still preserves the position in memory.
     }
   }, { passive: true });
+  // Typing in either search box opens the palette with what was typed so far.
+  searches.forEach((search) => search.addEventListener("input", () => {
+    const value = search.value;
+    search.value = "";
+    if (search.closest(".sidebar")) setNavigation(false);
+    openCommandPalette(value);
+  }));
   searches.forEach((search) => search.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && search.value.trim()) {
+    if (event.key === "Enter") {
       event.preventDefault();
       if (search.closest(".sidebar")) setNavigation(false);
-      globalSearch(search.value);
+      openCommandPalette(search.value);
     }
   }));
   document.onkeydown = (event) => {
@@ -7287,14 +7496,141 @@ function bindCommon() {
       navButton?.focus();
       return;
     }
-    if (event.key === "/" && !/input|textarea/i.test(document.activeElement?.tagName)) {
+    if ((event.key === "k" || event.key === "K") && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      const mobile = window.matchMedia("(max-width: 760px)").matches;
-      const search = root.querySelector(mobile ? ".mobile-sidebar-search input" : ".topbar-search input");
-      if (mobile) setNavigation(true);
-      search?.focus();
+      openCommandPalette("");
+      return;
+    }
+    if (event.key === "/" && !/input|textarea|select/i.test(document.activeElement?.tagName) && !document.activeElement?.isContentEditable) {
+      event.preventDefault();
+      openCommandPalette("");
     }
   };
+}
+
+// Pages the palette can open by name, from the sidebar plus the dashboard.
+function paletteDestinations() {
+  const pages = [{ label: "Dashboard", href: "#/" }];
+  for (const group of NAV_GROUPS) for (const link of [...group.links, ...(group.more || [])]) {
+    if (link.type && !state.model.resources[link.type]) continue;
+    if (link.server && !document.body.dataset[link.server]) continue;
+    pages.push({ label: link.label, href: link.type ? "#/resources/" + encodeURIComponent(link.type) : link.href || document.body.dataset[link.server], group: group.title });
+  }
+  return pages;
+}
+
+// Records matching the query, grouped by type. Nightly check runs are left out: their
+// check is the useful result, and the Evidence page groups them.
+function paletteResults(query) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const pages = words.length ? paletteDestinations().filter(({ label, group }) => words.every((word) => (label + " " + (group || "")).toLowerCase().includes(word))) : paletteDestinations().slice(0, 8);
+  const groups = new Map();
+  if (words.length) {
+    for (const entry of state.resources) {
+      if (entry.record.type === "evidence" && isCheckRun(entry.record)) continue;
+      const head = (String(entry.record.code || "") + " " + entry.record.title).toLowerCase();
+      const text = head + " " + entrySearchText(entry);
+      if (!words.every((word) => text.includes(word))) continue;
+      const rank = words.every((word) => head.includes(word)) ? 0 : 1;
+      if (!groups.has(entry.record.type)) groups.set(entry.record.type, []);
+      groups.get(entry.record.type).push({ entry, rank });
+    }
+  }
+  const records = [...groups.entries()].map(([type, items]) => ({
+    type,
+    label: state.model.resources[type]?.pluralTitle || type,
+    total: items.length,
+    items: items.sort((a, b) => a.rank - b.rank || String(a.entry.record.code || a.entry.record.title).localeCompare(String(b.entry.record.code || b.entry.record.title), undefined, { numeric: true })).slice(0, 5).map(({ entry }) => entry)
+  })).sort((a, b) => Math.min(...groups.get(a.type).map(({ rank }) => rank)) - Math.min(...groups.get(b.type).map(({ rank }) => rank)) || b.total - a.total);
+  return { pages, records };
+}
+
+let paletteDialog = null;
+
+function openCommandPalette(initial = "") {
+  if (paletteDialog?.open) {
+    const input = paletteDialog.querySelector("input");
+    input.value = initial || input.value;
+    input.dispatchEvent(new Event("input"));
+    input.focus();
+    return;
+  }
+  const dialog = document.createElement("dialog");
+  paletteDialog = dialog;
+  dialog.className = "command-palette";
+  dialog.setAttribute("aria-label", "Search");
+  dialog.innerHTML = '<div class="palette-input"><span aria-hidden="true">⌕</span><input type="search" role="combobox" aria-expanded="true" aria-controls="palette-results" aria-autocomplete="list" placeholder="Search records and pages" autocomplete="off"><kbd>Esc</kbd></div><div class="palette-results" id="palette-results" role="listbox"></div><p class="palette-help"><kbd>↑</kbd><kbd>↓</kbd> to move · <kbd>Enter</kbd> to open · <kbd>⌘K</kbd> or <kbd>/</kbd> to search</p>';
+  document.body.append(dialog);
+  const input = dialog.querySelector("input");
+  const list = dialog.querySelector(".palette-results");
+  let active = 0;
+  let timer = null;
+  const options = () => [...list.querySelectorAll("[role=option]")];
+  const highlight = (index) => {
+    const items = options();
+    if (!items.length) return;
+    active = (index + items.length) % items.length;
+    items.forEach((item, position) => item.setAttribute("aria-selected", String(position === active)));
+    items[active].scrollIntoView({ block: "nearest" });
+    input.setAttribute("aria-activedescendant", items[active].id);
+  };
+  const paint = () => {
+    const query = input.value.trim();
+    const { pages, records } = paletteResults(query);
+    let index = 0;
+    const option = (href, body, extra = "") => '<a role="option" id="palette-option-' + (index++) + '" href="' + esc(href) + '"' + extra + '>' + body + '</a>';
+    const sections = [];
+    if (pages.length) sections.push('<section><h3>Pages</h3>' + pages.slice(0, 6).map((page) => option(page.href, '<span class="palette-title">' + esc(page.label) + '</span>' + (page.group ? '<small>' + esc(page.group) + '</small>' : ""))).join("") + '</section>');
+    for (const group of records) {
+      sections.push('<section><h3>' + esc(group.label) + ' <span class="tab-count">' + group.total + '</span></h3>' + group.items.map(({ record }) => {
+        const word = recordStatusWord(record.type, record);
+        return option("#/resource/" + encodeURIComponent(record.type) + "/" + encodeURIComponent(record.id), (record.code ? '<code>' + esc(record.code) + '</code>' : "") + '<span class="palette-title">' + esc(record.title) + '</span>' + (word ? statusPill(word) : ""));
+      }).join("") + (group.total > group.items.length ? option("#/resources/" + encodeURIComponent(group.type) + "?q=" + encodeURIComponent(query), '<span class="palette-more">All ' + group.total + ' ' + esc(group.label.toLowerCase()) + ' matching “' + esc(query) + '”</span>') : "") + '</section>');
+    }
+    if (query) sections.push('<section>' + option("#", '<span class="palette-more">Search all records for “' + esc(query) + '”</span>', ' data-full-search') + '</section>');
+    list.innerHTML = sections.join("") || empty("Type to search records and pages.");
+    highlight(0);
+  };
+  const close = () => dialog.close();
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; paint(); }, 120);
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") { event.preventDefault(); highlight(active + 1); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); highlight(active - 1); }
+    else if (event.key === "Enter") {
+      event.preventDefault();
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+        paint();
+      }
+      options()[active]?.click();
+    }
+  });
+  list.addEventListener("click", (event) => {
+    const link = event.target.closest("[role=option]");
+    if (!link) return;
+    if (link.hasAttribute("data-full-search")) {
+      event.preventDefault();
+      const query = input.value;
+      close();
+      globalSearch(query);
+      return;
+    }
+    close();
+  });
+  list.addEventListener("mousemove", (event) => {
+    const link = event.target.closest("[role=option]");
+    if (link) highlight(options().indexOf(link));
+  });
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) close(); });
+  dialog.addEventListener("close", () => { dialog.remove(); if (paletteDialog === dialog) paletteDialog = null; }, { once: true });
+  dialog.showModal();
+  input.value = initial;
+  paint();
+  input.focus();
 }
 
 function globalSearch(query) {
@@ -7556,6 +7892,10 @@ function formatValue(value, field, type, compact = false, record = null) {
   if (Array.isArray(value)) {
     if (!value.length) return '<span class="muted">None</span>';
     if (field === "evidenceSourceKinds") return value.map((item) => '<span class="tag choice-tag">' + esc(properCase(item)) + '</span>').join(" ");
+    if (compact && value.length > 2) {
+      const hidden = value.slice(2).map((item) => state.resources.find(({ record }) => record.id === item)?.record.title || item);
+      return value.slice(0, 2).map((item) => formatReference(item)).join(" ") + ' <span class="more-chip" title="' + esc(hidden.join("\n")) + '">+' + hidden.length + ' more</span>';
+    }
     return value.map((item) => formatReference(item)).join(" ");
   }
   if (field === "sourceReference" && typeof value === "object") {

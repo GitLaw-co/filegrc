@@ -9,6 +9,9 @@ import { PROGRAM_PATH } from "../src/program-path.js";
 import {
   actionStatusWord,
   automatedCheckStatusWord,
+  checkRunHistory,
+  isCheckRun,
+  nightlyRuns,
   controlStatusWord,
   governedStatusWord,
   latestCheckResults,
@@ -134,3 +137,55 @@ test("action cards carry the shared status pill", () => {
   assert.match(html, /<span class="status-pill tone-red" data-status-word="failing">Failing<\/span>/);
 });
 
+
+test("check history lists one check's runs and lays them out night by night", () => {
+  const run = (id, checkId, at, result) => ({ id, type: "evidence", sourceResourceIds: [checkId], collectedAt: at, operatingResult: result });
+  const evidence = [
+    run("e2", "automated-check-a", "2026-11-26T02:00:00Z", "failed"),
+    run("e1", "automated-check-a", "2026-11-24T02:00:00Z", "passed"),
+    run("e3", "automated-check-b", "2026-11-26T02:00:00Z", "passed"),
+    { id: "manual", type: "evidence", sourceResourceIds: ["component-x"], collectedOn: "2026-11-20" }
+  ];
+  assert.deepEqual(evidence.map(isCheckRun), [true, true, true, false]);
+  const history = checkRunHistory(evidence, "automated-check-a");
+  assert.deepEqual(history.map(({ id }) => id), ["e1", "e2"]);
+  const nights = nightlyRuns(history, "2026-11-26", 3);
+  assert.deepEqual(nights.map(({ day, run }) => [day, run?.result ?? null]), [["2026-11-24", "passed"], ["2026-11-25", null], ["2026-11-26", "failed"]]);
+  assert.equal(nightlyRuns([], "2026-03-01", 30)[0].day, "2026-01-31");
+});
+
+test("record pages and lists use the gap-aware control status", () => {
+  assert.match(APP_SCRIPT, /record\.status === "implemented" && controlLaunchState\(record\.id\) === "implemented-with-gaps"\) return "critical"/);
+  assert.match(APP_SCRIPT, /const word = recordStatusWord\(type, record\);/);
+  for (const name of ["checkSummary", "controlSummary", "riskSummary", "vendorSummary", "renderCheckRunEvidence", "collectionEmptyBlock", "openCommandPalette"]) {
+    assert.match(APP_SCRIPT, new RegExp(`function ${name}\\(`), name);
+  }
+  assert.doesNotMatch(APP_SCRIPT, /titleCase\(entry\.record\.title\)/);
+});
+
+test("search groups matching records by type, ranks title matches first and leaves out check runs", () => {
+  const source = APP_SCRIPT.slice(APP_SCRIPT.indexOf("function paletteDestinations"), APP_SCRIPT.indexOf("let paletteDialog"));
+  const entry = (type, id, title, extra = {}) => ({ record: { type, id, title, ...extra }, content: {} });
+  const context = {
+    NAV_GROUPS,
+    isCheckRun,
+    document: { body: { dataset: {} } },
+    entrySearchText: ({ record }) => JSON.stringify(record).toLowerCase(),
+    state: {
+      model: { resources: { control: { pluralTitle: "Controls" }, evidence: { pluralTitle: "Evidence artifacts" }, risk: { pluralTitle: "Risks" } } },
+      resources: [
+        entry("control", "control-2", "Data Backups", { code: "SDC 59" }),
+        entry("control", "control-1", "Testing", { code: "SDC 97", statement: "restores a backup" }),
+        entry("evidence", "run", "Backups: passed", { sourceResourceIds: ["automated-check-a"], operatingResult: "passed" }),
+        entry("risk", "risk-1", "Lost backup")
+      ]
+    }
+  };
+  const result = vm.runInNewContext(source + "\nJSON.stringify(paletteResults('backup'))", context);
+  const { pages, records } = JSON.parse(result);
+  assert.deepEqual(records.map(({ type, total }) => [type, total]), [["control", 2], ["risk", 1]]);
+  assert.deepEqual(records[0].items.map(({ record }) => record.id), ["control-2", "control-1"]);
+  assert.deepEqual(pages, []);
+  const risks = JSON.parse(vm.runInNewContext(source + "\nJSON.stringify(paletteResults('risks'))", context));
+  assert.deepEqual(risks.pages.map(({ label }) => label), ["Risks"]);
+});
