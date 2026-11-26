@@ -1434,7 +1434,7 @@ test("moves global search into the mobile navigation drawer", () => {
   assert.match(APP_SCRIPT, /class="search topbar-search"/);
   assert.match(APP_SCRIPT, /const searches = \[\.\.\.root\.querySelectorAll\("\[data-global-search\]"\)\]/);
   assert.match(APP_SCRIPT, /if \(search\.closest\("\.sidebar"\)\) setNavigation\(false\)/);
-  assert.match(APP_SCRIPT, /const mobile = window\.matchMedia\("\(max-width: 760px\)"\)\.matches/);
+  assert.match(APP_SCRIPT, /\(event\.key === "k" \|\| event\.key === "K"\) && \(event\.metaKey \|\| event\.ctrlKey\)/);
   assert.match(APP_STYLES, /@media\(max-width:1100px\)\{\.topbar-search\{display:none\}/);
   assert.match(APP_STYLES, /\.sidebar \.mobile-sidebar-search\{display:flex/);
 });

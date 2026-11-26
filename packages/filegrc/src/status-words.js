@@ -68,6 +68,29 @@ export function latestCheckResults(evidence) {
   return latest;
 }
 
+export function isCheckRun(record) {
+  return record?.type === "evidence" && ["passed", "failed"].includes(record.operatingResult)
+    && (record.sourceResourceIds || []).some((id) => String(id).startsWith("automated-check-"));
+}
+
+// Every run of one check, oldest first.
+export function checkRunHistory(evidence, checkId) {
+  return (evidence || []).filter((record) => isCheckRun(record) && record.sourceResourceIds.includes(checkId))
+    .map((record) => ({ id: record.id, result: record.operatingResult, at: String(record.collectedAt || record.collectedOn || "") }))
+    .sort((a, b) => a.at.localeCompare(b.at));
+}
+
+// One slot per night for the `nights` days ending today, each holding that night's
+// latest run or null.
+export function nightlyRuns(runs, today, nights = 30) {
+  const byDay = new Map();
+  for (const run of runs) byDay.set(run.at.slice(0, 10), run);
+  return Array.from({ length: nights }, (_, index) => {
+    const day = isoDatePlusDays(today, index - nights + 1);
+    return { day, run: byDay.get(day) || null };
+  });
+}
+
 // An active check reads from its latest run: passed is Passing, failed is Failing, no
 // run yet is Not monitored.
 export function automatedCheckStatusWord(record, latest = {}) {
@@ -110,4 +133,4 @@ export function riskRatingDisplay(value) {
   return { label, tone, score };
 }
 
-export const STATUS_WORD_FUNCTIONS = [isoDatePlusDays, controlStatusWord, governedStatusWord, actionStatusWord, personStatusWord, latestCheckResults, automatedCheckStatusWord, vendorStatusWord, statusWordForRecord, riskRatingDisplay];
+export const STATUS_WORD_FUNCTIONS = [isoDatePlusDays, controlStatusWord, governedStatusWord, actionStatusWord, personStatusWord, isCheckRun, checkRunHistory, nightlyRuns, latestCheckResults, automatedCheckStatusWord, vendorStatusWord, statusWordForRecord, riskRatingDisplay];

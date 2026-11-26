@@ -490,6 +490,91 @@ a.dash-card:hover{border-color:var(--input)}
 .dash-setup-progress{display:flex;align-items:center;gap:10px;min-width:220px;font-size:13px;color:var(--muted-foreground)}
 .dash-setup-body{display:grid;gap:16px;padding:0 20px 20px}
 .dash .overview-grid{margin:0}
+/* Record pages: status beside the title, summary strips, tabs, run strips. */
+.detail-head h2{font-size:24px;line-height:1.25;font-weight:600;letter-spacing:-.01em}
+.record-head-status{display:flex;align-items:center;gap:8px;margin-top:6px}
+.record-summary{margin:0 0 16px;padding:16px 20px;display:grid;gap:12px}
+.summary-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.summary-facts,.summary-sub,.vendor-review-block small{color:var(--muted-foreground);font-size:13px}
+.summary-sub{display:block;margin-top:4px;font-size:12px}
+.summary-label{display:block;margin-bottom:4px;color:var(--muted-foreground);font-size:12px;font-weight:500}
+.passes-when{margin:0;font-size:14px;line-height:1.5}
+.passes-when strong{display:block;margin-bottom:2px;font-size:12px;font-weight:600;color:var(--muted-foreground)}
+.run-strip-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px}
+.run-strip-head h3{margin:0;font-size:14px;font-weight:600}
+.run-strip-head span{color:var(--muted-foreground);font-size:12px}
+.run-strip{display:flex;flex-wrap:wrap;gap:4px}
+:is(.record-table,.summary-table) .run-strip{flex-wrap:nowrap}
+.record-table td[data-label="Last run"],.summary-table td:nth-child(3){white-space:nowrap}
+.run-dot{display:block;width:12px;height:12px;border-radius:3px;background:var(--tone-grey-line)}
+.run-dot.tone-green{background:var(--tone-green-bar)}
+.run-dot.tone-red{background:var(--tone-red-line)}
+a.run-dot:hover{outline:2px solid var(--foreground);outline-offset:1px}
+.summary-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.summary-table{width:100%;border-collapse:collapse;font-size:14px}
+.summary-table th{background:var(--fg-table-head);text-align:left;font-size:12px;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border)}
+.summary-table td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.summary-table td a,.summary-list a{color:var(--foreground);font-weight:500}
+.summary-list{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+.summary-list li{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.summary-list small{color:var(--muted-foreground);font-size:12px}
+.record-tabs [role=tablist],.list-tabs{display:flex;flex-wrap:nowrap;max-width:100%;overflow-x:auto}
+:is(.record-tabs,.list-tabs) [role=tab]{flex:0 0 auto;white-space:nowrap}
+.record-tabs [role=tabpanel]{padding-top:4px;overflow-x:auto}
+.record-tabs h4{margin:14px 0 6px;font-size:13px;font-weight:600}
+.tab-count{display:inline-block;min-width:18px;padding:0 6px;border-radius:999px;background:var(--muted);color:var(--muted-foreground);font-size:11px;font-weight:600;text-align:center}
+.criteria-chips{display:flex;flex-wrap:wrap;gap:6px}
+.criteria-chip{padding:2px 8px;border:1px solid var(--input);border-radius:4px;color:var(--foreground);font-size:12px;font-weight:600;text-decoration:none;font-variant-numeric:tabular-nums}
+.criteria-chip:hover{background:var(--muted)}
+.summary-strip{grid-template-columns:repeat(5,minmax(0,1fr));gap:16px}
+.summary-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:20px}
+.criticality-bar{display:inline-grid;grid-template-columns:repeat(3,72px);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.criticality-bar .seg{padding:4px 0;text-align:center;font-size:12px;color:var(--muted-foreground);border-right:1px solid var(--border)}
+.criticality-bar .seg:last-child{border-right:0}
+.criticality-bar .seg-low.on{background:var(--tone-green-bg);color:var(--tone-green-ink);font-weight:600}
+.criticality-bar .seg-medium.on{background:var(--tone-amber-bg);color:var(--tone-amber-ink);font-weight:600}
+.criticality-bar .seg-high.on{background:var(--tone-red-bg);color:var(--tone-red-ink);font-weight:600}
+.vendor-review-block{display:grid;gap:4px}
+.vendor-review-block a{color:var(--foreground)}
+.summary-banner{margin:0;padding:10px 12px;border:1px solid var(--tone-red-line);border-radius:6px;background:var(--tone-red-bg);color:var(--tone-red-ink);font-size:14px}
+.list-tabs{display:flex;margin:0 0 12px}
+.list-tabs>[role=tab]{text-decoration:none}
+
+/* List rows stay one line: the next action shows its chip and title, the detail is a tooltip. */
+.record-workflow-action.one-line{display:flex;align-items:center;gap:6px;min-width:0;max-width:340px;white-space:nowrap;color:var(--foreground);text-decoration:none}
+.record-workflow-action.one-line strong{overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:500}
+.record-workflow-action.one-line:hover strong{text-decoration:underline}
+.more-chip{flex:0 0 auto;padding:0 6px;border-radius:999px;background:var(--muted);color:var(--muted-foreground);font-size:11px;font-weight:600;white-space:nowrap;cursor:help}
+.record-table td[data-label="Code"],.record-table td[data-label="Reference"],.record-table td[data-label="Request Reference"]{white-space:nowrap}
+.record-table td[data-label="Git file"]{position:relative}
+.row-open{position:absolute;top:50%;right:10px;transform:translateY(-50%);padding:4px 10px;border:1px solid var(--input);border-radius:6px;background:var(--background);color:var(--foreground);font-size:12px;font-weight:600;text-decoration:none;opacity:0;pointer-events:none}
+.record-table tbody tr:hover .row-open{opacity:1;pointer-events:auto}
+
+/* Empty lists: an icon, what the record is for, and the way to add one. */
+.empty-state{display:grid;justify-items:center;gap:6px;padding:40px 16px;text-align:center}
+.empty-state h3{margin:6px 0 0;font-size:16px;font-weight:600}
+.empty-state p{max-width:520px;margin:0;color:var(--muted-foreground);font-size:14px;line-height:1.5}
+.empty-state .empty-guidance{font-size:13px}
+.empty-state .button{margin-top:8px}
+.empty-icon{width:36px;height:36px;padding:8px;border-radius:999px;background:var(--muted);fill:none;stroke:var(--muted-foreground);stroke-width:1.6;stroke-linecap:round}
+
+/* Search palette. */
+.command-palette{width:min(640px,calc(100vw - 32px));max-height:min(560px,calc(100vh - 80px));margin:10vh auto auto;padding:0;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.command-palette[open]{display:flex;flex-direction:column}
+.palette-input{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);color:var(--muted-foreground)}
+.palette-input input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--foreground);font:inherit;font-size:15px}
+.palette-results{flex:1;overflow:auto;padding:6px}
+.palette-results section{padding:4px 0}
+.palette-results h3{margin:6px 10px 4px;color:var(--muted-foreground);font-size:12px;font-weight:600}
+.palette-results [role=option]{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;color:var(--foreground);text-decoration:none;font-size:14px}
+.palette-results [role=option][aria-selected=true]{background:var(--muted)}
+.palette-results [role=option] code{flex:0 0 auto;font-size:12px;color:var(--muted-foreground);white-space:nowrap}
+.palette-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.palette-results [role=option] small{color:var(--muted-foreground);font-size:12px}
+.palette-more{color:var(--muted-foreground)}
+.palette-help{margin:0;padding:8px 16px;border-top:1px solid var(--border);color:var(--muted-foreground);font-size:12px}
+.palette-help kbd,.palette-input kbd{padding:0 4px;border:1px solid var(--border);border-radius:4px;font-size:11px}
+@media(max-width:760px){.summary-strip,.summary-grid{grid-template-columns:1fr 1fr}.summary-table th:nth-child(4),.summary-table td:nth-child(4){display:none}.row-open{display:none}}
 @media(max-width:1100px){.dash-top,.dash-main{grid-template-columns:1fr}}
 @media(max-width:760px){
   .page{padding:16px 16px 48px}
