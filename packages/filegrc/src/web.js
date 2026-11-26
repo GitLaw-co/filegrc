@@ -2101,7 +2101,8 @@ function helpNavigation(route = {}) {
 
 function sidebarGuidePanel() {
   const guide = workspaceGuide();
-  if (guide) return '<div class="automation-nav-panel guide-nav-panel"><strong>' + esc(guide.title) + '</strong>' + (guide.message ? '<p>' + esc(guide.message) + '</p>' : "") + guideLink(guide, "hosted-automation-nav", "Open the guide") + '</div>';
+  // One compact link: the dashboard header carries the same guide as a button.
+  if (guide) return '<a class="guide-nav-link" href="' + esc(guide.href) + '"' + (guide.message ? ' title="' + esc(guide.message) + '"' : "") + (guide.external ? ' target="_blank" rel="noopener noreferrer"' : "") + '><span aria-hidden="true">?</span>' + esc(guide.title) + '</a>';
   return '<div class="automation-nav-panel"><p>' + esc(HOSTED_AUTOMATION.compactMessage) + '</p><a class="hosted-automation-nav" href="' + esc(hostedNavigation()) + '" target="_blank" rel="noopener noreferrer">Autopilot <span aria-hidden="true">↗</span></a></div>';
 }
 
