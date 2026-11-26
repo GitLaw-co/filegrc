@@ -48,10 +48,41 @@ const REFRESH_MS = 30_000;
 const PUSH_ATTEMPTS = 3;
 const MAX_QUEUED_WRITES = 20;
 const PROTECTED_BRANCH_NAMES = new Set(["main", "master", "trunk", "develop"]);
+const PULL_REQUEST_URL = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]{0,8})(?:\/[^?#]*)?(?:[?#].*)?$/;
+const COMMIT_SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 // Ties an Approve to the exact suggested answer the owner read.
 export function answerRevision(answer) {
   return createHash("sha256").update(String(answer ?? "")).digest("hex").slice(0, 16);
+}
+
+// `owner/repo` of a GitHub remote URL (https, ssh or scp form), lowercased; null otherwise.
+export function githubRepositoryFromRemote(url) {
+  const match = /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|ssh:\/\/git@github\.com(?::22)?\/|git@github\.com:)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(String(url ?? "").trim());
+  return match ? `${match[1]}/${match[2]}`.toLowerCase() : null;
+}
+
+// The pull requests of the program repository that an action links to, by
+// number, in link order. Links to other repositories are not bound.
+export function actionPullRequests(action, repository) {
+  if (!repository) return [];
+  const raw = action?.links;
+  const entries = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? Object.values(raw) : [];
+  const found = new Map();
+  for (const entry of entries) {
+    const url = typeof entry === "string" ? entry : entry && typeof entry === "object" ? String(entry.url ?? entry.href ?? "") : "";
+    const match = PULL_REQUEST_URL.exec(url.trim());
+    if (!match || `${match[1]}/${match[2]}`.toLowerCase() !== String(repository).toLowerCase()) continue;
+    const number = Number(match[3]);
+    if (!found.has(number)) found.set(number, { url: `https://github.com/${match[1]}/${match[2]}/pull/${number}`, number });
+  }
+  return [...found.values()];
+}
+
+// The form value an Approve carries for the pull request versions the owner saw:
+// `<number>:<sha>` pairs joined by commas.
+export function pullRequestVersions(pullRequests) {
+  return (pullRequests ?? []).map(({ number, headSha }) => `${number}:${headSha ?? ""}`).join(",");
 }
 
 export function actionDecisionsBranchFromEnv(env = process.env) {
@@ -205,6 +236,8 @@ export function createActionRegister(input, options = {}) {
   }
   const now = options.now ?? (() => new Date());
   const refreshMs = options.refreshMs ?? REFRESH_MS;
+  const configuredRepository = options.pullRequestRepository ? String(options.pullRequestRepository).toLowerCase() : null;
+  let remoteRepository;
   const blobCache = new Map();
   let lastFetchAt = 0;
   let writes = Promise.resolve();
@@ -245,6 +278,52 @@ export function createActionRegister(input, options = {}) {
       if (!/couldn't find remote ref|could not find remote ref/i.test(error.message)) throw error;
     }
     lastFetchAt = Date.now();
+  }
+
+  // `owner/repo` whose pull request links an Approve is bound to: the option when
+  // given, else the GitHub repository the remote points at.
+  async function pullRequestRepository(remote) {
+    if (configuredRepository) return configuredRepository;
+    if (remoteRepository === undefined) {
+      const url = await runGitCommand(root, ["remote", "get-url", "--", remote], { operation: "read the repository remote" }).catch(() => "");
+      remoteRepository = githubRepositoryFromRemote(url);
+    }
+    return remoteRepository;
+  }
+
+  // The current head commit of each pull request, read from the remote's
+  // refs/pull/<n>/head. A number missing from the result has no such ref.
+  async function pullRequestHeads(remote, numbers) {
+    const heads = new Map();
+    const wanted = [...new Set(numbers)];
+    if (!wanted.length) return heads;
+    const listing = await runGitCommand(root, ["ls-remote", "--", remote, ...wanted.map((number) => `refs/pull/${number}/head`)], {
+      operation: "read the pull request versions", timeoutMs: 30_000
+    });
+    for (const line of listing.split("\n")) {
+      const match = /^([0-9a-f]{40,64})\trefs\/pull\/([0-9]+)\/head$/.exec(line.trim());
+      if (match && wanted.includes(Number(match[2]))) heads.set(Number(match[2]), match[1]);
+    }
+    return heads;
+  }
+
+  // Each waiting action's linked pull requests with their current head, so the
+  // page can say which version an Approve covers. A failed lookup leaves headSha null.
+  async function withPullRequests(actions, remote, problems) {
+    const repository = await pullRequestRepository(remote);
+    const linked = actions.map((action) => (DECIDABLE.has(action.status) ? actionPullRequests(action, repository) : []));
+    const numbers = linked.flat().map(({ number }) => number);
+    let heads = new Map();
+    if (numbers.length) {
+      try {
+        heads = await pullRequestHeads(remote, numbers);
+      } catch {
+        problems.push("The current versions of linked pull requests could not be read. Reload before approving.");
+      }
+    }
+    return actions.map((action, index) => (linked[index].length
+      ? { ...action, pullRequests: linked[index].map((pr) => ({ ...pr, headSha: heads.get(pr.number) ?? null })) }
+      : action));
   }
 
   async function prefix() {
@@ -299,14 +378,15 @@ export function createActionRegister(input, options = {}) {
     }
     const decisions = await readDecisions(trackingRef);
     const people = loaded.resources.filter(({ type }) => type === "person");
-    return { exists: true, actions: applyPendingDecisions(register.actions, decisions), problems, decisions, people };
+    const actions = await withPullRequests(applyPendingDecisions(register.actions, decisions), remote, problems);
+    return { exists: true, actions, problems, decisions, people };
   }
 
   async function decide(request) {
     return exclusive(() => decideNow(request), { limit: true });
   }
 
-  async function decideNow({ actionId, outcome, note, viewer, answerRevision: seenAnswer }) {
+  async function decideNow({ actionId, outcome, note, viewer, answerRevision: seenAnswer, pullRequestVersions: seenVersions }) {
     if (!DECISION_OUTCOMES.includes(outcome)) throw requestError(400, "Choose a response: approve, done, progress, message or reject.");
     const text = String(note ?? "").replace(/\r\n?/g, "\n").trim();
     if (outcome !== "approved" && !text) {
@@ -333,6 +413,29 @@ export function createActionRegister(input, options = {}) {
     if (outcome === "approved" && seenAnswer !== answerRevision(current.suggestedAnswer)) {
       throw requestError(409, `The suggested answer for ${current.id} changed after you opened the page. Read it again before approving.`);
     }
+    // An Approve of an action that links pull requests of this repository covers
+    // the versions the page showed; if any head moved since, the owner reviews again.
+    let pullRequests = [];
+    if (outcome === "approved") {
+      pullRequests = actionPullRequests(current, await pullRequestRepository(remote));
+      if (pullRequests.length) {
+        const seen = parseVersions(seenVersions);
+        let heads;
+        try {
+          heads = await pullRequestHeads(remote, pullRequests.map(({ number }) => number));
+        } catch {
+          throw requestError(503, "The pull request version could not be checked. Try again in a minute.");
+        }
+        for (const pr of pullRequests) {
+          const head = heads.get(pr.number);
+          if (!head) throw requestError(409, `Pull request #${pr.number} was not found, so its version cannot be approved.`);
+          if (seen.get(pr.number) !== head) {
+            throw requestError(409, "The pull request changed since you opened this page — reload and review again.");
+          }
+          pr.headSha = head;
+        }
+      }
+    }
     const decidedAt = now();
     const on = decidedAt.toISOString();
     const id = `${on.replace(/[-:.]/g, "")}-${randomBytes(3).toString("hex")}`;
@@ -345,6 +448,8 @@ export function createActionRegister(input, options = {}) {
       on,
       note: text,
       ...(outcome === "approved" ? { approvedAnswer: current.suggestedAnswer ?? null } : {}),
+      ...(pullRequests.length === 1 ? { pullRequest: pullRequests[0] } : {}),
+      ...(pullRequests.length > 1 ? { pullRequests } : {}),
       actionStatusBefore: current.status
     };
     const path = `${await prefix()}${ACTION_DECISIONS_DIRECTORY}/${current.id}/${id}.json`;
@@ -505,6 +610,16 @@ function requestError(status, message) {
   const error = new Error(message);
   error.status = status;
   return error;
+}
+
+// `<number>:<sha>` pairs from the Approve form; anything malformed is ignored.
+function parseVersions(value) {
+  const versions = new Map();
+  for (const pair of String(value ?? "").split(",")) {
+    const match = /^([1-9][0-9]{0,8}):(.*)$/.exec(pair.trim());
+    if (match && COMMIT_SHA.test(match[2])) versions.set(Number(match[1]), match[2]);
+  }
+  return versions;
 }
 
 function parseDecision(source, actionId, id) {
