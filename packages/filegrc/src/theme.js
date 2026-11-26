@@ -426,6 +426,9 @@ export const DASHBOARD_STYLES = String.raw`
 .sp-more.open>.sp-links{display:grid;gap:1px}
 .sp-count{display:inline-block;min-width:16px;padding:0 4px;border-radius:999px;background:var(--sidebar-accent);text-align:center}
 .sp-sidebar .automation-nav-panel{box-shadow:none;border-radius:6px}
+.guide-nav-link{display:flex;align-items:center;gap:8px;margin:8px 0 0;padding:6px 8px;border-radius:6px;color:var(--muted-foreground);font-size:12px;line-height:1.3;text-decoration:none}
+.guide-nav-link:hover{background:var(--sidebar-accent,rgba(0,0,0,.05));color:var(--foreground)}
+.guide-nav-link span{display:inline-grid;place-items:center;flex:0 0 16px;height:16px;border:1px solid currentColor;border-radius:50%;font-size:10px;font-weight:600}
 
 /* Overview dashboard. */
 .dash{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
