@@ -1,3 +1,4 @@
+import { observationPeriodStart } from "./action-status.js";
 import { scaffoldPeriodImpactReview, previewPeriodImpactReview, recordPeriodImpactReview } from "./period-impact.js";
 import { scaffoldObligationRuleWithdrawal, previewObligationRuleWithdrawal, withdrawObligationRule } from "./obligation-rule-withdrawal.js";
 import { planWorkQueue, sourceDeadlineValidation } from "./work-queue.js";
@@ -254,7 +255,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       }
       if (url.pathname === ACTIONS_PATH && ["GET", "POST"].includes(request.method)) {
         const viewer = actionPersonId ? await actionViewer(input, hostedAuth, request, actionPersonId) : null;
-        return await actions(actionRegister, request, response, url, viewer);
+        return await actions(actionRegister, request, response, url, viewer, observationPeriodStart((await loadWorkspace(input)).resources));
       }
       if (attestingPersonId && ["GET", "POST"].includes(request.method)) {
         return await acknowledgements(input, request, response, url, attestingPersonId, requestOptions, actionRegister);
@@ -1139,7 +1140,7 @@ async function actionRegisterExists(input) {
 // Everyone signed in can read the register; only the owner or an admin can
 // decide. A decision is saved away from the authoritative branch, then the page
 // shows it as pending until the register records it.
-async function actions(register, request, response, url, viewer) {
+async function actions(register, request, response, url, viewer, periodStart = null) {
   let fragment = url.searchParams.has("fragment");
   const page = async (status, extra = {}) => {
     const view = await register.view();
@@ -1160,7 +1161,8 @@ async function actions(register, request, response, url, viewer) {
       problems: view.problems,
       decided: extra.decided ?? (url.searchParams.get("decided") ? { actionId: url.searchParams.get("decided"), outcome: url.searchParams.get("outcome") } : null),
       error: extra.error ?? null,
-      fragment
+      fragment,
+      periodStart
     }), "text/html; charset=utf-8");
   };
   if (request.method === "GET") return page(200);

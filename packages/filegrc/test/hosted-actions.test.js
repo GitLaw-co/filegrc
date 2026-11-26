@@ -140,7 +140,8 @@ test("signed-in people see their own open actions by default and can filter the 
   assert.match(mine.body, /class="filter-chip" href="[^"]*"[^>]*>Owner: Jordan Lee/);
   assert.match(mine.body, /Status: Waiting on someone/);
   assert.match(mine.body, /2 of 4 actions/);
-  assert.match(mine.body, /<span class="badge">P1<\/span><span class="badge warn">Blocks period start<\/span>/);
+  assert.match(mine.body, /<span class="impact-tag">Blocks [^<]+<\/span><span class="priority-chip">P1<\/span><span class="status-pill tone-blue" data-task-status="to-review">To review<\/span>/);
+  assert.doesNotMatch(mine.body, /data-status-word="failing"|>Failing</);
 
   const everyone = await page(OWNER, "?owner=&status=all");
   for (const id of ["ACT-001", "ACT-002", "ACT-003", "ACT-004"]) assert.match(everyone.body, new RegExp(`id="${id}"`));
@@ -215,8 +216,8 @@ test("approving saves one decision file on the decisions branch and leaves main 
 
   const after = await page(OWNER, "?owner=&status=all&decided=ACT-001&outcome=approved");
   assert.match(after.body, /role="status">Approved ACT-001\./);
-  const card = after.body.slice(after.body.indexOf('id="ACT-001"'), after.body.indexOf('id="ACT-002"'));
-  assert.match(card, /<span class="badge good">Accepted<\/span>/);
+  const card = after.body.slice(after.body.indexOf('id="ACT-001"'), after.body.indexOf("</details>", after.body.indexOf('id="ACT-001"')));
+  assert.match(card, /<span class="status-pill tone-green-muted" data-task-status="accepted">Accepted<\/span>/);
   assert.match(card, /not yet in the register/);
   assert.doesNotMatch(card, /name="decision"/, "a settled action offers no more buttons");
 
@@ -360,7 +361,7 @@ test("a task is marked done or part done; a decision is approved", async (contex
   const body = (await page(OWNER)).body;
   const task = body.slice(body.indexOf('id="ACT-004"'));
   const decision = body.slice(body.indexOf('id="ACT-001"'), body.indexOf('id="ACT-004"'));
-  assert.match(task, /<span class="badge">Task<\/span>/);
+  assert.match(task, /<span class="action-kind">Task<\/span>/);
   assert.match(task, /<h3>Steps<\/h3>/);
   for (const value of ["done", "progress", "feedback", "reject"]) assert.match(task, new RegExp(`name="decision" value="${value}"`));
   assert.doesNotMatch(task, /name="decision" value="approve"/, "a task has nothing to approve");
@@ -375,7 +376,7 @@ test("a task is marked done or part done; a decision is approved", async (contex
   assert.equal((await decide(OWNER, { actionId: "ACT-004", decision: "done", note: "All steps done on 4 Nov." })).status, 303);
   const after = await page(OWNER, "?owner=&status=all&decided=ACT-004&outcome=done");
   assert.match(after.body, /role="status">Marked as done: ACT-004\./);
-  assert.match(after.body.slice(after.body.indexOf('id="ACT-004"')), /<span class="badge good">Done<\/span>/);
+  assert.match(after.body.slice(after.body.indexOf('id="ACT-004"')), /<span class="status-pill tone-green-muted" data-task-status="done">Done<\/span>/);
   assert.doesNotMatch((await page(OWNER)).body, /id="ACT-004"/, "a done task no longer waits");
   const outcomes = await Promise.all((await decisionFiles(remote)).map(async (file) => JSON.parse(await git(remote, ["show", `${BRANCH}:${file}`])).outcome));
   assert.deepEqual(outcomes.sort(), ["done", "progress"]);
@@ -538,7 +539,7 @@ test("the overview summary counts the signed-in person's waiting actions, or eve
     action("D", { status: "done" })
   ], { viewerPersonId: OWNER, today: "2026-11-03" });
   assert.equal(summary.scope, "viewer");
-  assert.deepEqual(summary.counts, { waiting: 2, blocking: 1, overdue: 1, waitingEveryone: 3, blockingEveryone: 2, overdueEveryone: 1, dueSoonEveryone: 0 });
+  assert.deepEqual(summary.counts, { waiting: 2, blocking: 1, overdue: 1, waitingEveryone: 3, blockingEveryone: 2, overdueEveryone: 1, toReview: 2, toReviewEveryone: 3, dueSoonEveryone: 0 });
   assert.deepEqual(summary.items.map(({ id, overdue }) => [id, overdue]), [["A", true], ["B", false]]);
   assert.equal(summarizeActions([action("B", { due: "2026-12-01" })], { today: "2026-11-17" }).counts.dueSoonEveryone, 1);
   assert.equal(summarizeActions([action("B", { due: "2026-12-01" })], { today: "2026-11-16" }).counts.dueSoonEveryone, 0);

@@ -1,3 +1,4 @@
+import { compareActions } from "./action-status.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -187,16 +188,7 @@ export function filterActions(actions, filters) {
     && (!filters.priority || action.priority === filters.priority)
     && (!filters.type || actionKind(action) === filters.type)
     && (!filters.blocks || action.blocksPeriodStart === true)
-  )).sort((a, b) => (
-    rank(a.priority, ACTION_PRIORITIES) - rank(b.priority, ACTION_PRIORITIES)
-    || String(a.due ?? "9999").localeCompare(String(b.due ?? "9999"))
-    || a.id.localeCompare(b.id)
-  ));
-}
-
-function rank(value, order) {
-  const index = order.indexOf(value);
-  return index === -1 ? order.length : index;
+  )).sort(compareActions);
 }
 
 // What the dashboard shows: the viewer's actions waiting for a decision (everyone's
@@ -217,6 +209,8 @@ export function summarizeActions(actions, { viewerPersonId = null, today = new D
       waitingEveryone: waiting.length,
       blockingEveryone: blocking(waiting),
       overdueEveryone: overdue(waiting),
+      toReview: mine.filter((action) => action.status === "proposed").length,
+      toReviewEveryone: waiting.filter((action) => action.status === "proposed").length,
       dueSoonEveryone: dueSoon(waiting)
     },
     items: mine.slice(0, limit).map(({ id, title, ownerId, status, priority, due, blocksPeriodStart, kind }) => ({

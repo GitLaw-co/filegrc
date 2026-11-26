@@ -19,7 +19,8 @@ import { escapeHtml, renderMarkdown } from "./markdown.js";
 import { ACTION_FILTER_KEYS, ACTION_KIND_LABELS } from "./action-register.js";
 import { CONTROL_AREA_FUNCTIONS, CONTROL_AREA_RULES, CONTROL_AREAS } from "./control-areas.js";
 import { NAV_GROUPS, NAV_ICONS } from "./navigation.js";
-import { actionStatusWord, STATUS_WORD_FUNCTIONS, STATUS_WORDS } from "./status-words.js";
+import { STATUS_WORD_FUNCTIONS, STATUS_WORDS } from "./status-words.js";
+import { ACTION_PRIORITY_ORDER, ACTION_STATUS_FUNCTIONS, actionTaskStatus, blocksStartLabel, SHORT_MONTHS } from "./action-status.js";
 
 export function dashboardProgramReadiness(programReadiness = {}) {
   const progress = programReadiness.progress || {};
@@ -206,7 +207,7 @@ const ACTION_OUTCOME_LABELS = { approved: "Approved", done: "Marked as done", pr
 // Hosted mode's action register page. Filters are a plain GET form and each
 // decision is a plain POST form. The app shows the page at #/actions and wires those
 // forms to fetch; a POST without JavaScript still gets a full page back.
-export function renderActionsPage({ viewer = null, exists = true, people = [], allActions = [], actions = [], filters = {}, problems = [], decided = null, error = null, fragment = false }) {
+export function renderActionsPage({ viewer = null, exists = true, people = [], allActions = [], actions = [], filters = {}, problems = [], decided = null, error = null, fragment = false, periodStart = null }) {
   // As a fragment the page lives in the app shell at #/actions, so its links stay there.
   const base = fragment ? "#/actions" : "/actions";
   const personName = (id) => people.find((person) => person.id === id)?.title || id || "Nobody";
@@ -244,7 +245,7 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
   const decidedNotice = decided?.actionId
     ? `<p class="panel action-saved" role="status">${escapeHtml({ approved: "Approved", done: "Marked as done:", progress: "Progress saved for", feedback: "Message sent to the agent for", rejected: "Rejected" }[decided.outcome] || "Saved")} ${escapeHtml(decided.actionId)}. ${escapeHtml({ approved: "When the agent next files responses, it carries it out and opens a pull request for you to merge.", done: "It goes into the register when someone next asks the agent to file responses.", progress: "The action stays open for the remaining steps.", feedback: "The agent answers by updating the action when someone next asks it to file responses.", rejected: "The reason goes into the register when someone next asks the agent to file responses." }[decided.outcome] || "")}</p>`
     : "";
-  const cards = actions.map((action) => actionCard(action, { personName, hidden, viewer, open: actions.length === 1 || action.id === decided?.actionId })).join("\n");
+  const cards = actions.map((action) => actionCard(action, { personName, hidden, viewer, open: actions.length === 1 || action.id === decided?.actionId, periodStart })).join("\n");
   const intro = viewer
     ? `Work that needs a person. Open one to see what to do. A task: do the steps, then mark it done. A decision: approve the suggested answer or message the agent to change it. You can respond to actions you own${viewer.isAdmin ? ", and to any action as an admin" : ""}.`
     : "Work that needs a person. Sign in on the hosted site to respond to one.";
@@ -312,17 +313,17 @@ const ACTION_RESPONSES = {
   reject: { button: "Won't do", submit: "Reject", help: "This should not be done as suggested. Give the reason; it goes in the audit record.", field: "Why not?", placeholder: "" }
 };
 
-function actionCard(action, { personName, hidden, viewer, open }) {
+function actionCard(action, { personName, hidden, viewer, open, periodStart = null }) {
   const id = escapeHtml(action.id);
   const kind = Object.hasOwn(ACTION_KINDS, action.kind) ? ACTION_KINDS[action.kind] : ACTION_KINDS.decision;
   const today = new Date().toISOString().slice(0, 10);
   const waiting = ["open", "proposed"].includes(action.status);
+  const task = actionTaskStatus(action, today);
   const tags = [
-    `<span class="badge">${escapeHtml(kind.label)}</span>`,
-    action.priority ? `<span class="badge">${escapeHtml(String(action.priority).toUpperCase())}</span>` : "",
-    action.blocksPeriodStart === true && waiting ? '<span class="badge warn">Blocks period start</span>' : "",
-    waiting ? "" : `<span class="badge${["accepted", "done"].includes(action.status) ? " good" : ""}">${escapeHtml(ACTION_STATUS_LABELS[action.status] || action.status)}</span>`,
-    actionStatusPill(action, today)
+    `<span class="action-kind">${escapeHtml(kind.label)}</span>`,
+    action.blocksPeriodStart === true && waiting ? `<span class="impact-tag">${escapeHtml(blocksStartLabel(periodStart))}</span>` : "",
+    action.priority ? `<span class="priority-chip">${escapeHtml(String(action.priority).toUpperCase())}</span>` : "",
+    task ? `<span class="status-pill tone-${task.tone}" data-task-status="${task.id}">${escapeHtml(task.label)}</span>` : `<span class="status-pill tone-grey">${escapeHtml(ACTION_STATUS_LABELS[action.status] || action.status)}</span>`
   ].join("");
   const meta = [action.id, `Owner ${personName(action.ownerId)}`, action.due ? `Due ${action.due}` : ""].filter(Boolean).map(escapeHtml).join(" · ");
   const section = (label, html) => html ? `<section class="action-section"><h3>${label}</h3>${html}</section>` : "";
@@ -368,13 +369,6 @@ function actionCard(action, { personName, hidden, viewer, open }) {
     ${decide}
     </div>
   </details>`;
-}
-
-// The shared status word for an action, as the app's pills render it.
-function actionStatusPill(action, today) {
-  const word = actionStatusWord(action, today);
-  const definition = word && STATUS_WORDS[word];
-  return definition ? `<span class="status-pill tone-${definition.tone}" data-status-word="${word}">${escapeHtml(definition.label)}</span>` : "";
 }
 
 // Which version of each linked pull request an Approve covers, read when the page was built.
@@ -476,7 +470,9 @@ const CONTROL_AREAS = ${JSON.stringify(CONTROL_AREAS)};
 const CONTROL_AREA_RULES = ${JSON.stringify(CONTROL_AREA_RULES)};
 const NAV_GROUPS = ${JSON.stringify(NAV_GROUPS)};
 const NAV_ICONS = ${JSON.stringify(NAV_ICONS)};
-${[...STATUS_WORD_FUNCTIONS, ...CONTROL_AREA_FUNCTIONS].map((fn) => fn.toString()).join("\n")}
+const ACTION_PRIORITY_ORDER = ${JSON.stringify(ACTION_PRIORITY_ORDER)};
+const SHORT_MONTHS = ${JSON.stringify(SHORT_MONTHS)};
+${[...STATUS_WORD_FUNCTIONS, ...CONTROL_AREA_FUNCTIONS, ...ACTION_STATUS_FUNCTIONS].map((fn) => fn.toString()).join("\n")}
 const STAGE_PAGE_SUMMARIES = ${JSON.stringify({
   ...RESOURCE_PAGE_SUMMARIES,
   "utility:evidence-sources": "Check that each Control has an authoritative, retrievable evidence source.",
@@ -990,7 +986,8 @@ function dashboardTiles(readiness) {
   if (document.body.dataset.actionsHref) {
     const counts = summary?.counts || {};
     const ready = summary && !summary.failed;
-    tiles.push(tile("Actions waiting", ready ? esc(String(counts.waitingEveryone ?? 0)) : "…", ready ? esc((counts.overdueEveryone ?? 0) + " overdue") : "Loading", "#/actions?owner=&status=waiting"));
+    const note = [(counts.blockingEveryone ?? 0) + " block the start", (counts.toReviewEveryone ?? 0) + " to review"].join(" · ");
+    tiles.push(tile("Actions waiting", ready ? esc(String(counts.waitingEveryone ?? 0)) : "…", ready ? esc(note) + '<span class="dash-note-secondary">' + esc((counts.overdueEveryone ?? 0) + " past due date") + '</span>' : "Loading", "#/actions?owner=&status=waiting"));
   }
   const today = currentDate();
   const horizon = isoDatePlusDays(today, 14);
@@ -1015,39 +1012,47 @@ function areaReadinessTable(controls) {
   return '<section class="dash-card dash-areas"><div class="dash-card-head"><h3>Readiness by area</h3><a href="#/resources/control">All controls</a></div><table class="dash-table"><thead><tr><th>Area</th><th>Controls</th><th>Readiness</th><th><span class="sr-only">Open</span></th></tr></thead><tbody>' + body + '</tbody></table><p class="dash-footnote">A control\'s area comes from its <code>extensions.filegrc.area</code> field, or from its title when that is not set.</p></section>';
 }
 
-// The viewer's waiting actions and the scheduled work they own, soonest first.
+// The viewer's waiting actions in register order, then the scheduled work they own.
 function assignedToYouPanel() {
   const summary = state.actionSummary;
   const viewerId = summary?.viewerPersonId || null;
   const today = currentDate();
   const horizon = isoDatePlusDays(today, 14);
-  const actions = (summary?.items || []).map((item) => ({
-    due: item.due || "",
-    href: "#/actions?q=" + encodeURIComponent(item.id) + "&owner=&status=all",
-    title: item.title || item.id,
-    meta: [item.id, item.priority ? String(item.priority).toUpperCase() : "", item.due ? "due " + formatCalendarDate(item.due) : "", viewerId ? "" : item.ownerName || ""].filter(Boolean).join(" · "),
-    word: actionStatusWord({ status: item.status, due: item.due }, today)
-  }));
+  const periodStart = observationWindow()?.startsOn || null;
+  const actions = [...(summary?.items || [])].sort(compareActions).map((item) => {
+    const task = actionTaskStatus(item, today);
+    const kind = { fix: "Task", external: "Task outside the app", decision: "Decision", approval: "Approval", information: "Information needed" }[item.kind] || "";
+    return {
+      href: "#/actions?q=" + encodeURIComponent(item.id) + "&owner=&status=all",
+      title: item.title || item.id,
+      meta: [item.id, kind, item.due ? "due " + formatCalendarDate(item.due) : "", viewerId ? "" : item.ownerName || ""].filter(Boolean).join(" · "),
+      tags: (item.blocksPeriodStart ? '<span class="impact-tag">' + esc(blocksStartLabel(periodStart)) + '</span>' : "")
+        + (item.priority ? '<span class="priority-chip">' + esc(String(item.priority).toUpperCase()) + '</span>' : "")
+        + (task ? tonePill(task.label, task.tone) : "")
+    };
+  });
+  // Scheduled operating work past its deadline is a compliance gap, so it keeps the red word.
   const queueWord = { overdue: "failing", blocked: "critical", due: "due-soon" };
   const scheduled = viewerId && state.sections?.obligations === "complete"
     ? distinctObligationPreviews(activeOperationItems(queueState().items).filter((item) => (
       (item.ownerIds || []).includes(viewerId)
       && (["overdue", "due", "blocked"].includes(item.status) || String(item.dueOn || item.dueWindowEnd || "").slice(0, 10) <= horizon)
-    )), 5).map((item) => ({
-      due: String(item.dueOn || item.dueWindowEnd || "").slice(0, 10),
+    )), 3).map((item) => ({
       href: "#/stage/run",
       title: item.title,
       meta: "Scheduled · " + timingText(item),
-      word: queueWord[item.status] || null
+      tags: statusPill(queueWord[item.status] || null)
     }))
     : [];
-  const items = [...actions, ...scheduled].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999")).slice(0, 8);
+  const row = (item) => '<li><a href="' + esc(item.href) + '"><span><strong>' + esc(item.title) + '</strong><small>' + esc(item.meta) + '</small></span><span class="dash-tags">' + item.tags + '</span></a></li>';
   let body;
   if (document.body.dataset.actionsHref && !summary) body = '<p class="home-actions-status" role="status"><span class="spinner" aria-hidden="true"></span> Loading your work…</p>';
   else if (summary?.failed) body = '<p class="home-actions-status" role="alert">Actions could not load. <a href="#/actions">Open the Actions page</a>.</p>';
-  else if (!items.length) body = '<p class="home-actions-status">Nothing is assigned to you right now.</p>';
-  else body = '<ul class="dash-list">' + items.map((item) => '<li><a href="' + esc(item.href) + '"><span><strong>' + esc(item.title) + '</strong><small>' + esc(item.meta) + '</small></span>' + statusPill(item.word) + '</a></li>').join("") + '</ul>';
-  const more = viewerId && (summary?.counts?.waiting || 0) > actions.length ? '<a class="dash-more" href="#/actions">' + esc(String(summary.counts.waiting - actions.length)) + ' more waiting on you</a>' : "";
+  else if (!actions.length && !scheduled.length) body = '<p class="home-actions-status">Nothing is assigned to you right now.</p>';
+  else body = (actions.length ? '<ul class="dash-list">' + actions.slice(0, scheduled.length ? 6 : 8).map(row).join("") + '</ul>' : "")
+    + (scheduled.length ? '<h4 class="dash-subhead">Scheduled work</h4><ul class="dash-list">' + scheduled.map(row).join("") + '</ul>' : "");
+  const shown = Math.min(actions.length, scheduled.length ? 6 : 8);
+  const more = viewerId && (summary?.counts?.waiting || 0) > shown ? '<a class="dash-more" href="#/actions">' + esc(String(summary.counts.waiting - shown)) + ' more waiting on you</a>' : "";
   return '<section class="dash-card dash-assigned"><div class="dash-card-head"><h3>' + (summary && !viewerId ? "Waiting for a decision" : "Assigned to you") + '</h3>' + (document.body.dataset.actionsHref ? '<a href="#/actions">All actions</a>' : "") + '</div>' + body + more + '</section>';
 }
 
