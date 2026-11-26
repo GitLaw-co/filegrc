@@ -435,11 +435,11 @@ test("the sidebar links to Actions when the register exists and shows the worksp
   const source = APP_SCRIPT.slice(APP_SCRIPT.indexOf("function helpNavigation"), APP_SCRIPT.indexOf("function sidebarGuidePanel"))
     + APP_SCRIPT.slice(APP_SCRIPT.indexOf("function navLink"), APP_SCRIPT.indexOf("function navIcon"));
   const navigation = (dataset, route = {}) => vm.runInNewContext(source + `
-    helpNavigation(route) + "|" + [{ server: "actionsHref", href: "#/actions", label: "Actions", route: "actions" }, { server: "acknowledgementsHref", label: "My acknowledgements" }]
+    helpNavigation(route) + "|" + [{ server: "actionsHref", href: "#/actions", label: "Actions", route: "actions" }, { server: "acknowledgementsHref", label: "My policies and training" }]
       .map((link) => navLink(link, route)?.html || "").join("")`, {
     document: { body: { dataset } }, esc: String, route, state: { actionSummary: { counts: { waiting: 3 } }, model: { resources: {} } }
   });
-  assert.equal(navigation({ actionsHref: "/actions", helpHref: "/faq", acknowledgementsHref: "/acknowledgements" }, { name: "actions" }), '<a class="help-nav" href="#/help">Help</a>|<a class="sp-link current" href="#/actions" aria-current="page"><span>Actions</span><span class="sidebar-action-count" aria-label="3 waiting for your decision">3</span></a><a class="sp-link" href="/acknowledgements"><span>My acknowledgements</span></a>');
+  assert.equal(navigation({ actionsHref: "/actions", helpHref: "/faq", acknowledgementsHref: "/acknowledgements" }, { name: "actions" }), '<a class="help-nav" href="#/help">Help</a>|<a class="sp-link current" href="#/actions" aria-current="page"><span>Actions</span><span class="sidebar-action-count" aria-label="3 waiting for your decision">3</span></a><a class="sp-link" href="/acknowledgements"><span>My policies and training</span></a>');
   assert.equal(navigation({}), "|");
 
   assert.ok(APP_SCRIPT.includes('esc(state.workspace.brandName || document.body.dataset.appName || "FileGRC")'));

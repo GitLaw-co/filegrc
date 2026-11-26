@@ -94,43 +94,118 @@ export function resolveWorkflowDestination(destination, options = {}) {
   return "";
 }
 
-// Hosted mode's one write page: the signed-in person reads each owed subject
-// and confirms it. The server decides who is attesting; the form names only the subject.
-export function renderAcknowledgementsPage({ person, items = [], done = null, error = null, savedAside = false }) {
-  const doneItem = done ? `<p class="panel" role="status">${savedAside
+// Hosted mode's one write page for staff: the policies and training the signed-in
+// person owes, what they already completed, and a reader for one owed item
+// (`?item=<subject id>`). The server decides who is attesting; the form names only the subject.
+export function renderAcknowledgementsPage({ person, items = [], completed = [], item = null, done = null, error = null, savedAside = false }) {
+  const total = items.length + completed.length;
+  const open = items.find(({ subjectId }) => subjectId === item);
+  const finished = completed.find(({ subjectId }) => subjectId === item || subjectId === done);
+  const notice = done ? `<p class="panel ack-notice" role="status">${savedAside
     ? "Recorded. Your acknowledgement is saved and is added to the program record at the next review."
-    : "Recorded. Your acknowledgement is committed to the program repository."}</p>` : "";
+    : "Recorded. Your acknowledgement is committed to the program repository."}${items.length
+    ? ` <a href="/acknowledgements?item=${encodeURIComponent(items[0].subjectId)}">Next: ${escapeHtml(items[0].title)}</a>`
+    : ""}</p>` : item && !open ? `<p class="panel ack-notice" role="status">${finished
+    ? `You completed ${escapeHtml(finished.title)} on ${escapeHtml(formatCalendarDate(finished.completedOn))}.`
+    : "That item is not waiting for you."}</p>` : "";
   const errorItem = error ? `<p class="panel dialog-error" role="alert">${escapeHtml(error)}</p>` : "";
-  const sections = items.map((item) => `<section class="panel" aria-labelledby="ack-${escapeHtml(item.subjectId)}">
-    <p class="kicker">${item.attestationKind === "training" ? "Training" : "Acknowledgement"}</p>
-    <h3 id="ack-${escapeHtml(item.subjectId)}">${escapeHtml(item.title)}</h3>
-    <div class="markdown">${renderMarkdown(item.content || "")}</div>
-    <form method="post" action="/acknowledgements">
-      <input type="hidden" name="subjectResourceId" value="${escapeHtml(item.subjectId)}">
-      <button class="button primary" type="submit">I have ${item.attestationKind === "training" ? "completed" : "read and acknowledge"} ${escapeHtml(item.title)}</button>
-    </form>
-  </section>`).join("\n");
+  const body = open ? acknowledgementReader(open, items) : `<header class="ack-head">
+      <p class="kicker">${escapeHtml(person?.title || "Signed in")}</p>
+      <h1>My policies and training</h1>
+      <p>For SOC 2, everyone reads the company policies and completes security training when they join and once a year after. Open each item, read it, then confirm.</p>
+      ${total ? `<div class="ack-progress">
+        <div class="progress" role="progressbar" aria-label="Done" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${completed.length}"><span style="width:${Math.round((completed.length / total) * 100)}%"></span></div>
+        <p><strong>${completed.length} of ${total} done</strong></p>
+      </div>` : ""}
+    </header>
+    ${errorItem}${notice}
+    ${items.length ? "" : `<section class="ack-empty"><h2>You're up to date</h2><p>${completed.length ? "Nothing is waiting for you. What you completed is below." : "Nothing is waiting for you right now."}</p></section>`}
+    ${total ? `<ul class="ack-list">${items.map((entry) => acknowledgementRow(entry)).join("")}${completed.map((entry) => acknowledgementRow(entry, { done: true })).join("")}</ul>` : ""}`;
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>My acknowledgements · ${escapeHtml(appName())}</title>
-  <link rel="stylesheet" href="./filegrc.css">
+  <title>${open ? `${escapeHtml(open.title)} · ` : ""}My policies and training · ${escapeHtml(appName())}</title>
+  <link rel="stylesheet" href="/filegrc.css">
 </head>
 <body class="standalone-page">
-  <main id="main" class="page">
-    <div class="page-intro"><div>
-      <p class="kicker">${escapeHtml(person?.title || "Signed in")}</p>
-      <h2>My acknowledgements</h2>
-      <p>Read each item, then confirm it. FileGRC records a dated Attestation bound to the exact content you read.</p>
-    </div></div>
-    ${errorItem}${doneItem}
-    ${sections || `<p class="empty">You have nothing to acknowledge right now.</p>`}
-    <p><a href="/">Open the program</a> · <a href="/auth/logout">Sign out</a></p>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <main id="main" class="ack-page">
+    ${open ? `${errorItem}${body}` : body}
+    <p class="ack-footer"><a href="/">Open the program</a> · <a href="/auth/logout">Sign out</a></p>
   </main>
 </body>
 </html>`;
+}
+
+const ACKNOWLEDGEMENT_TYPES = { policy: "Policy", training: "Training", document: "Document" };
+
+function acknowledgementMeta(entry, { readingTime = false } = {}) {
+  const approved = entry.approvedBy?.length || entry.approvedOn
+    ? `Approved${entry.approvedBy?.length ? ` by ${entry.approvedBy.join(", ")}` : ""}${entry.approvedOn ? ` on ${formatCalendarDate(entry.approvedOn)}` : ""}`
+    : "";
+  return [
+    entry.version ? `Version ${entry.version}` : "",
+    approved,
+    readingTime && entry.content ? `${readingMinutes(entry.content)} min read` : ""
+  ].filter(Boolean).map(escapeHtml).join(" · ");
+}
+
+function acknowledgementRow(entry, { done = false } = {}) {
+  const type = `<span class="ack-type">${escapeHtml(ACKNOWLEDGEMENT_TYPES[entry.subjectType] || "Item")}</span>`;
+  const status = done
+    ? `<span class="status-pill tone-green">Done on ${escapeHtml(formatCalendarDate(entry.completedOn))}</span>`
+    : `<span class="status-pill tone-amber">To do</span>`;
+  const title = done
+    ? `<span class="ack-row-title">${escapeHtml(entry.title)}</span>`
+    : `<a class="ack-row-title" href="/acknowledgements?item=${encodeURIComponent(entry.subjectId)}">${escapeHtml(entry.title)}</a>`;
+  return `<li class="ack-row${done ? " done" : ""}">
+      <div class="ack-row-main">${type}${title}<span class="ack-meta">${acknowledgementMeta(entry, { readingTime: !done })}</span></div>
+      <div class="ack-row-status">${status}${done ? "" : `<a class="button primary" href="/acknowledgements?item=${encodeURIComponent(entry.subjectId)}" aria-label="Open ${escapeHtml(entry.title)}">Open</a>`}</div>
+    </li>`;
+}
+
+function acknowledgementReader(entry, items) {
+  const index = items.indexOf(entry);
+  const next = items[index + 1] || (index > 0 ? items[0] : null);
+  const training = entry.attestationKind === "training";
+  return `<p class="ack-back"><a href="/acknowledgements">&larr; My policies and training</a></p>
+    <header class="ack-reader-head">
+      <p class="ack-tags"><span class="ack-type">${escapeHtml(ACKNOWLEDGEMENT_TYPES[entry.subjectType] || "Item")}</span><span class="status-pill tone-amber">To do</span></p>
+      <h1>${escapeHtml(entry.title)}</h1>
+      <p class="ack-meta">${acknowledgementMeta(entry, { readingTime: true })}</p>
+    </header>
+    <article class="ack-reader">${renderMarkdown(stripDocumentHeader(entry.content || "", entry.title))}</article>
+    <form class="ack-confirm" method="post" action="/acknowledgements">
+      <input type="hidden" name="subjectResourceId" value="${escapeHtml(entry.subjectId)}">
+      <p>Item ${index + 1} of ${items.length}. Confirming records that you ${training ? "completed" : "read"} this version, with today's date.</p>
+      <div class="ack-confirm-actions">
+        <button class="button primary" type="submit">I have ${training ? "completed" : "read and acknowledge"} ${escapeHtml(entry.title)}</button>
+        ${next ? `<a class="button" href="/acknowledgements?item=${encodeURIComponent(next.subjectId)}">Next item</a>` : ""}
+      </div>
+    </form>`;
+}
+
+function readingMinutes(source) {
+  return Math.max(1, Math.round(String(source).split(/\s+/).filter(Boolean).length / 200));
+}
+
+// Spec-style documents open with a block of `Key: value` lines (Status, Owner,
+// Last-Reviewed, Layer, Depends-On) and repeat the title as their first heading.
+// The reader shows the title and version itself, so both are dropped.
+export function stripDocumentHeader(source, title = "") {
+  const lines = String(source).replace(/\r\n?/g, "\n").split("\n");
+  let start = 0;
+  while (start < lines.length && !lines[start].trim()) start += 1;
+  let end = start;
+  while (end < lines.length && /^[A-Z][A-Za-z-]*(?: [A-Za-z-]+)?:\s+\S/.test(lines[end])) end += 1;
+  const block = lines.slice(start, end).join("\n");
+  if (end > start && /^(Status|Owner|Last-Reviewed|Layer|Depends-On):/m.test(block.replace(/\s*[•·]\s*/g, "\n"))) start = end;
+  while (start < lines.length && !lines[start].trim()) start += 1;
+  const heading = /^#\s+(.+?)\s*#*\s*$/.exec(lines[start] || "");
+  if (heading && heading[1].trim().toLowerCase() === String(title).trim().toLowerCase()) start += 1;
+  return lines.slice(start).join("\n");
 }
 
 // Hosted mode's auditor-link page, served only to FILEGRC_ADMIN_EMAILS. The form
@@ -160,7 +235,7 @@ export function renderAuditorLinksPage({ admin = null, link = null, values = {},
   <title>Auditor links · ${escapeHtml(appName())}</title>
   <link rel="stylesheet" href="/filegrc.css">
 </head>
-<body>
+<body class="standalone-page">
   <main id="main" class="page">
     ${body}
     <p><a href="/">Open the program</a> · <a href="/auth/logout">Sign out</a></p>
@@ -404,7 +479,7 @@ function helpDocument(title, body) {
   <title>${escapeHtml(title)} · ${escapeHtml(appName())}</title>
   <link rel="stylesheet" href="/filegrc.css">
 </head>
-<body>
+<body class="standalone-page">
   <main id="main" class="page">
     ${body}
     <p><a href="/">Open the program</a> · <a href="/faq">Help</a></p>
@@ -952,7 +1027,7 @@ function dashboardHeader() {
   const acknowledgements = document.body.dataset.acknowledgementsHref;
   const guide = workspaceGuide();
   const buttons = (guide ? guideLink(guide, "button", guide.title) : "")
-    + (acknowledgements ? '<a class="button" href="' + esc(acknowledgements) + '">My acknowledgements</a>' : "")
+    + (acknowledgements ? '<a class="button" href="' + esc(acknowledgements) + '">My policies and training</a>' : "")
     + (document.body.dataset.actionsHref ? '<a class="button primary" href="#/actions">Open actions</a>' : "");
   return '<div class="dash-head"><div><h2>' + esc(first ? "Hello, " + first : (program.title || state.workspace.title || "Program")) + '</h2>' + (scope && first ? '<p>' + esc(scope) + '</p>' : "") + '</div><div class="dash-head-actions">' + buttons + '</div></div>';
 }
@@ -8574,7 +8649,13 @@ dialog::backdrop{background:rgba(0,0,24,.62)}
 .workflow-guidance .workflow-status{margin:4px 0 12px;color:var(--muted);font-size:10px}.workflow-completion-requirements{display:inline;appearance:none;-webkit-appearance:none;white-space:nowrap;padding:0;border:0;background:none;color:var(--accent);font:inherit;font-weight:750;cursor:pointer;text-decoration:underline;text-underline-offset:2px}.workflow-completion-requirements:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.completion-requirements-dialog ul{margin:14px 0 0;padding-left:20px;color:var(--muted);font-size:12px;line-height:1.55}
 .control-next-steps{margin:8px 0 9px;padding-left:18px;font-size:12px;line-height:1.5}.control-next-steps li+li{margin-top:7px}.detail-control aside .detail-workflow-panel{max-height:none;overflow:visible}
 .record-completion-state{background:var(--surface-soft)}.record-completion-state h3{margin:4px 0 5px;font-size:16.8px}.record-completion-state p:last-child{margin:0;color:var(--muted);font-size:11px;line-height:1.45}
-html:has(>body.standalone-page),body.standalone-page{height:auto;overflow:auto}
+/* Standalone pages scroll the viewport: body must not be a scroll container, and Basecoat's overscroll-behavior:none on body would swallow wheel scrolling. */
+html:has(>body.standalone-page),body.standalone-page{height:auto;overflow:visible}body.standalone-page{overscroll-behavior:auto}
+.ack-page{max-width:880px;margin:0 auto;padding:32px 24px 0;color:var(--ink);font-size:16px;line-height:1.6}.ack-head h1,.ack-reader-head h1{margin:6px 0 8px;color:var(--ink);font-size:30px;font-weight:700;line-height:1.2;letter-spacing:-.01em}.ack-head>p:not(.kicker){max-width:640px;margin:0;color:var(--muted);font-size:16px}.ack-progress{display:flex;align-items:center;gap:14px;margin:20px 0 4px}.ack-progress .progress{flex:1 1 auto;max-width:420px;height:8px;background:var(--line)}.ack-progress .progress>span{display:block;height:100%;border-radius:inherit;background:var(--accent)}.ack-progress p{margin:0;font-size:14px;white-space:nowrap}.ack-notice{margin:18px 0;font-size:15px}.ack-notice a,.ack-back a{color:var(--accent);font-weight:650}
+.ack-list{display:grid;gap:10px;margin:20px 0 0;padding:0;list-style:none}.ack-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;border:1px solid var(--line);border-radius:11px;background:var(--panel)}.ack-row.done{background:var(--surface-soft)}.ack-row.done .ack-type{background:var(--panel)}.ack-row-main{display:grid;gap:4px;min-width:0}.ack-row-title{color:var(--ink);font-size:17px;font-weight:650;line-height:1.35;text-decoration:none;overflow-wrap:anywhere}a.ack-row-title:hover{text-decoration:underline}.ack-type{display:inline-block;justify-self:start;padding:1px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:700;line-height:18px}.ack-meta{margin:0;color:var(--muted);font-size:14px}.ack-row-status{display:flex;flex:0 0 auto;align-items:center;gap:12px}.ack-empty{margin:22px 0 4px;padding:20px 22px;border:1px solid var(--line);border-radius:11px;background:var(--panel)}.ack-empty h2{margin:0 0 4px;font-size:20px}.ack-empty p{margin:0;color:var(--muted)}
+.ack-back{margin:0 0 18px;font-size:14px}.ack-tags{display:flex;align-items:center;gap:8px;margin:0}.ack-reader-head{max-width:720px;padding-bottom:16px;border-bottom:1px solid var(--line)}.ack-reader{max-width:720px;padding:8px 0 32px;color:var(--ink);font-size:16px;line-height:1.7}.ack-reader h1{margin:1.6em 0 .5em;font-size:26px;line-height:1.25}.ack-reader h2{margin:1.8em 0 .5em;font-size:22px;line-height:1.3}.ack-reader h3,.ack-reader h4{margin:1.5em 0 .4em;font-size:18px;line-height:1.35}.ack-reader p,.ack-reader li{font-size:16px;line-height:1.7}.ack-reader ul,.ack-reader ol{padding-left:1.4em}.ack-reader li+li{margin-top:.3em}.ack-reader a{color:var(--accent)}.ack-reader code{padding:1px 4px;border-radius:3px;background:var(--surface-soft);font-size:.9em}.ack-reader blockquote{margin-left:0;padding:4px 15px;border-left:3px solid var(--accent-light);color:var(--muted)}.ack-reader .table-wrap{overflow-x:auto}.ack-reader table{width:100%;border-collapse:collapse;font-size:14px}.ack-reader th,.ack-reader td{padding:8px;border:1px solid var(--line);text-align:left;vertical-align:top}
+.ack-confirm{position:sticky;bottom:0;z-index:5;margin:0 -24px;padding:14px 24px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--panel);box-shadow:0 -6px 18px rgba(0,0,53,.06)}.ack-confirm p{margin:0 0 10px;color:var(--muted);font-size:14px}.ack-confirm-actions{display:flex;flex-wrap:wrap;gap:10px}.ack-confirm .button{min-height:44px;white-space:normal}.ack-footer{margin:28px 0 40px;color:var(--muted);font-size:14px}.ack-footer a{color:var(--accent)}
+@media(max-width:620px){.ack-page{padding:20px 16px 0}.ack-head h1,.ack-reader-head h1{font-size:24px}.ack-row{flex-direction:column;align-items:stretch;gap:12px;padding:14px 16px}.ack-row-status{justify-content:space-between}.ack-confirm{margin:0 -16px;padding:12px 16px calc(12px + env(safe-area-inset-bottom))}.ack-confirm-actions .button{flex:1 1 100%}}
 .action-page{max-width:1040px}.action-heading{margin:4px 0 6px;font-size:24px}.action-filters{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:flex-end;margin:14px 0}.action-filters label{display:grid;gap:4px;font-size:12px;font-weight:700}.action-filters select{min-height:40px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink)}.action-filters .action-check{display:flex;align-items:center;gap:8px;min-height:40px}.action-filters .action-check input{width:20px;height:20px}.action-count{color:var(--muted);font-size:13px}
 .action-list{display:grid;gap:10px}.action-card{margin:0;padding:0}.action-card>.action-summary{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;cursor:pointer;list-style:none}.action-card>.action-summary::-webkit-details-marker{display:none}.action-card>.action-summary::before{content:"";flex:0 0 auto;width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(-45deg);transition:transform .15s}.action-card[open]>.action-summary::before{transform:rotate(45deg)}.action-summary-main{flex:1 1 auto;min-width:0}.action-title{display:block;font-size:15.5px;font-weight:600;line-height:1.35}.action-summary-main small{display:block;margin-top:3px;color:var(--muted);font-size:12.5px}.action-tags{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex:0 1 auto}.action-body{padding:2px 18px 18px 40px;border-top:1px solid var(--line)}.action-section h3,.action-respond h3{margin:16px 0 6px;font-size:12px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}.action-section .markdown{max-width:72ch}.action-links{margin:0;padding-left:20px}.action-links li{margin:3px 0;overflow-wrap:anywhere}.action-note{color:var(--muted);font-size:13px}.action-record{margin:0;padding:0;list-style:none;display:grid;gap:8px}.action-record li{padding:8px 12px;border-left:3px solid var(--line);font-size:13px}.action-entry-note{margin-top:3px;white-space:pre-wrap}.action-entry-pending{color:var(--muted);font-style:italic}.action-saved{border-left:3px solid var(--accent)}
 .action-respond{margin-top:18px;border-top:1px solid var(--line)}.action-response-choices{position:relative;display:flex;flex-wrap:wrap;gap:8px}.action-response-choices label{cursor:pointer;min-height:40px}.action-choice:checked+label{box-shadow:0 0 0 2px var(--focus)}.action-choice:focus-visible+label{outline:2px solid var(--focus);outline-offset:2px}.action-response{display:none;gap:8px;margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:10px}.action-respond:has(.action-choice[value=approve]:checked) .action-response[data-response=approve]{display:grid}.action-respond:has(.action-choice[value=done]:checked) .action-response[data-response=done]{display:grid}.action-respond:has(.action-choice[value=progress]:checked) .action-response[data-response=progress]{display:grid}.action-respond:has(.action-choice[value=feedback]:checked) .action-response[data-response=feedback]{display:grid}.action-respond:has(.action-choice[value=reject]:checked) .action-response[data-response=reject]{display:grid}.action-response-help{margin:0;color:var(--muted);font-size:13px}.action-pull-requests{margin:0;padding-left:18px;font-size:13px}.action-response label{font-weight:650;font-size:13.5px}.action-response textarea{width:100%;min-height:120px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--field,#fff);color:var(--ink);font:inherit;font-size:14px;line-height:1.5;resize:vertical}.action-response-submit{display:flex;justify-content:flex-end}
