@@ -53,6 +53,26 @@ export function compareActions(left, right) {
     || String(left.id).localeCompare(String(right.id));
 }
 
+// The Actions page's order: what blocks the period start first, then overdue
+// work, then priority, then the oldest due date, then id. Closed actions come last.
+export function compareActionsByUrgency(today) {
+  return (left, right) => {
+    const closed = (action) => (["open", "proposed"].includes(action.status) ? 0 : 1);
+    const blocks = (action) => (action.blocksPeriodStart === true ? 0 : 1);
+    const overdue = (action) => (isoDay(action.due) && action.due < today ? 0 : 1);
+    const priority = (action) => {
+      const index = ACTION_PRIORITY_ORDER.indexOf(action.priority);
+      return index === -1 ? ACTION_PRIORITY_ORDER.length : index;
+    };
+    return closed(left) - closed(right)
+      || blocks(left) - blocks(right)
+      || overdue(left) - overdue(right)
+      || priority(left) - priority(right)
+      || String(isoDay(left.due) ?? "9999").localeCompare(String(isoDay(right.due) ?? "9999"))
+      || String(left.id).localeCompare(String(right.id));
+  };
+}
+
 // "Blocks 1 Dec" when the period start is known, else "Blocks period start".
 export function blocksStartLabel(periodStart) {
   const day = isoDay(periodStart);

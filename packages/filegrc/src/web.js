@@ -16,7 +16,7 @@ import { HOSTED_AUTOMATION, OPERATING_HOSTED_AUTOMATION } from "./hosted-automat
 import { PROGRAM_PATH, programPathForModel, RESOURCE_INSTRUCTIONS, RESOURCE_OUTPUTS, RESOURCE_PAGE_SUMMARIES } from "./program-path.js";
 import { formatCalendarDate, formatLocalDateTime } from "./time.js";
 import { escapeHtml, renderMarkdown } from "./markdown.js";
-import { ACTION_FILTER_KEYS, ACTION_KIND_LABELS } from "./action-register.js";
+import { ACTION_FILTER_KEYS, ACTION_KIND_LABELS, actionOptions, actionTables } from "./action-register.js";
 import { CONTROL_AREA_FUNCTIONS, CONTROL_AREA_RULES, CONTROL_AREAS } from "./control-areas.js";
 import { NAV_GROUPS, NAV_ICONS } from "./navigation.js";
 import { STATUS_WORD_FUNCTIONS, STATUS_WORDS } from "./status-words.js";
@@ -283,17 +283,25 @@ const ACTION_STATUS_LABELS = {
   done: "Done",
   dropped: "Dropped"
 };
+// Whether Show done is ticked, remembered per browser.
+const ACTION_SHOW_DONE_KEY = "filegrc.actions.showDone.v1";
 const ACTION_OUTCOME_LABELS = { approved: "Approved", done: "Marked as done", progress: "Done part of it", feedback: "Message to the agent", rejected: "Rejected" };
 
-// Hosted mode's action register page. Filters are a plain GET form and each
-// decision is a plain POST form. The app shows the page at #/actions and wires those
-// forms to fetch; a POST without JavaScript still gets a full page back.
-export function renderActionsPage({ viewer = null, exists = true, people = [], allActions = [], actions = [], filters = {}, problems = [], decided = null, error = null, fragment = false, periodStart = null }) {
+// Hosted mode's action register page, built for getting things done. The default
+// view lists what waits on the signed-in person as cards, most urgent first, with
+// the response buttons on the card; what waits on others is grouped by owner below,
+// and closed actions are behind Show done. Filters are plain GET links and forms and
+// each response is a plain POST form. The app shows the page at #/actions and wires
+// those forms to fetch; without JavaScript every link and form still works, and
+// Show done is a CSS toggle.
+export function renderActionsPage({ viewer = null, exists = true, people = [], allActions = [], actions = [], doneActions = [], otherActions = [], filters = {}, problems = [], decided = null, error = null, fragment = false, periodStart = null, today = new Date().toISOString().slice(0, 10) }) {
   // As a fragment the page lives in the app shell at #/actions, so its links stay there.
   const base = fragment ? "#/actions" : "/actions";
   const personName = (id) => people.find((person) => person.id === id)?.title || id || "Nobody";
-  const ownerIds = [...new Set(allActions.map(({ ownerId }) => ownerId).filter(Boolean))]
-    .sort((a, b) => personName(a).localeCompare(personName(b)));
+  const viewerId = viewer?.personId || "";
+  const isWaiting = (action) => ["open", "proposed"].includes(action.status);
+  const waitingView = filters.status === "waiting";
+  const owner = filters.owner ?? "";
   const keys = ACTION_FILTER_KEYS;
   const hidden = keys.map((key) => `<input type="hidden" name="${key}" value="${escapeHtml(filters[key] ?? "")}">`).join("");
   const href = (changes) => {
@@ -301,39 +309,93 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
     for (const key of keys) next.set(key, changes[key] ?? filters[key] ?? "");
     return `${base}?${escapeHtml(next.toString())}`;
   };
+  const waitingCount = (id) => allActions.filter((action) => isWaiting(action) && (!id || action.ownerId === id)).length;
+
+  // Who: Me, Everyone, then each other owner, with what waits on them.
+  const ownerIds = [...new Set(allActions.map(({ ownerId }) => ownerId).filter(Boolean))]
+    .filter((id) => id !== viewerId)
+    .sort((a, b) => personName(a).localeCompare(personName(b)));
+  const personLink = (id, label) => `<a href="${href({ owner: id })}"${owner === id ? ' aria-current="true"' : ""}>${escapeHtml(label)} <span class="action-person-count" aria-label="${waitingCount(id)} waiting">${waitingCount(id)}</span></a>`;
+  const personBar = `<nav class="action-people" aria-label="Whose actions">${[
+    ...(viewerId ? [personLink(viewerId, "Me")] : []),
+    personLink("", "Everyone"),
+    ...ownerIds.map((id) => personLink(id, personName(id)))
+  ].join("")}</nav>`;
+
   const statusLabel = (value) => value === "waiting" ? "Waiting on someone" : value === "all" ? "Any" : ACTION_STATUS_LABELS[value] || value;
   const menus = [
-    { key: "owner", label: "Owner", options: [["", "Any"], ...ownerIds.map((id) => [id, personName(id)])], name: personName },
-    { key: "status", label: "Status", options: [["all", "Any"], ["waiting", "Waiting on someone"], ...Object.entries(ACTION_STATUS_LABELS)], name: statusLabel, inactive: "all" },
+    { key: "status", label: "Status", options: [["waiting", "Waiting on someone"], ["all", "Any"], ...Object.entries(ACTION_STATUS_LABELS)], name: statusLabel, inactive: "waiting" },
     { key: "priority", label: "Priority", options: [["", "Any"], ...["p1", "p2", "p3"].map((value) => [value, value.toUpperCase()])], name: (value) => value.toUpperCase() },
     { key: "type", label: "Type", options: [["", "Any"], ...Object.entries(ACTION_KIND_LABELS)], name: (value) => ACTION_KIND_LABELS[value] || value },
     { key: "blocks", label: "Blocks period start", options: [["", "Any"], ["yes", "Yes"]], name: () => "Yes" }
   ];
-  const menu = ({ key, label, options, inactive = "" }) => `<details class="filter-menu${(filters[key] ?? "") !== inactive ? " active" : ""}"><summary aria-label="Filter by ${escapeHtml(label.toLowerCase())}">${escapeHtml(label)}<span class="filter-caret" aria-hidden="true">▾</span></summary>
-      <div class="filter-options" role="group" aria-label="${escapeHtml(label)}">${options.map(([value, text]) => `<a href="${href({ [key]: value })}"${(filters[key] ?? "") === value ? ' aria-current="true"' : ""}>${escapeHtml(text)}</a>`).join("")}</div></details>`;
+  const menu = ({ key, label, options, inactive = "" }) => `<details class="filter-menu${(filters[key] ?? inactive) !== inactive ? " active" : ""}"><summary aria-label="Filter by ${escapeHtml(label.toLowerCase())}">${escapeHtml(label)}<span class="filter-caret" aria-hidden="true">▾</span></summary>
+      <div class="filter-options" role="group" aria-label="${escapeHtml(label)}">${options.map(([value, text]) => `<a href="${href({ [key]: value })}"${(filters[key] ?? inactive) === value ? ' aria-current="true"' : ""}>${escapeHtml(text)}</a>`).join("")}</div></details>`;
   const chips = [
     ...(filters.q ? [`<a class="filter-chip" href="${href({ q: "" })}" aria-label="Remove search ${escapeHtml(filters.q)}">Search: ${escapeHtml(filters.q)} <span aria-hidden="true">×</span></a>`] : []),
-    ...menus.filter(({ key, inactive = "" }) => (filters[key] ?? "") !== inactive).map(({ key, label, name, inactive = "" }) => (
+    ...menus.filter(({ key, inactive = "" }) => (filters[key] ?? inactive) !== inactive).map(({ key, label, name, inactive = "" }) => (
       `<a class="filter-chip" href="${href({ [key]: inactive })}" aria-label="Remove filter ${escapeHtml(label)}: ${escapeHtml(name(filters[key]))}">${escapeHtml(label)}: ${escapeHtml(name(filters[key]))} <span aria-hidden="true">×</span></a>`))
   ];
-  const filterForm = `<div class="filter-bar"><form class="filter-toolbar" role="search" aria-label="Filter actions" method="get" action="/actions">
+  const showDone = waitingView
+    ? `<label class="action-show-done"><input type="checkbox" id="action-show-done" data-show-done> Show done <span class="action-person-count">${doneActions.length}</span></label>`
+    : "";
+  const filterForm = `<div class="filter-bar action-toolbar">${personBar}<form class="filter-toolbar" role="search" aria-label="Filter actions" method="get" action="/actions">
     <label class="filter-search"><span class="sr-only">Search actions</span><input type="search" name="q" placeholder="Search actions" value="${escapeHtml(filters.q ?? "")}"></label>
     ${keys.filter((key) => key !== "q").map((key) => `<input type="hidden" name="${key}" value="${escapeHtml(filters[key] ?? "")}">`).join("")}
     <div class="filter-buttons">${menus.map(menu).join("")}</div>
+    ${showDone}
     <span class="filter-count">${actions.length} of ${allActions.length} actions</span>
   </form>
-  ${chips.length ? `<div class="filter-chips">${chips.join("")}<a class="filter-clear" href="${base}?owner=&amp;status=all">Clear all</a></div>` : ""}</div>`;
+  ${chips.length ? `<div class="filter-chips">${chips.join("")}<a class="filter-clear" href="${href({ q: "", status: "waiting", priority: "", type: "", blocks: "" })}">Clear all</a></div>` : ""}</div>`;
+
+  // Progress for the selected person (the viewer by default), or everyone.
+  const scope = owner ? allActions.filter((action) => action.ownerId === owner) : allActions;
+  const doneCount = scope.filter((action) => !isWaiting(action)).length;
+  const blocking = scope.filter((action) => isWaiting(action) && action.blocksPeriodStart === true).length;
+  const overdue = scope.filter((action) => isWaiting(action) && /^\d{4}-\d{2}-\d{2}$/.test(String(action.due ?? "")) && action.due < today).length;
+  const who = owner && owner === viewerId ? "You" : owner ? personName(owner) : "Everyone";
+  const startDay = blocksStartLabel(periodStart).replace(/^Blocks /, "");
+  const progress = exists && scope.length
+    ? `<section class="panel action-progress" aria-label="Progress"><div class="action-progress-head"><p><strong>${doneCount} of ${scope.length} done</strong> <span class="action-progress-who">${escapeHtml(who)}</span></p>
+      <p class="action-progress-detail">${blocking ? `<span class="impact-tag">${blocking} ${blocking === 1 ? "blocks" : "block"} ${escapeHtml(startDay === "period start" ? "the period start" : `the period start (${startDay})`)}</span>` : `<span>Nothing blocks the period start</span>`}${overdue ? ` <span class="status-pill tone-amber-outline">${overdue} overdue</span>` : ""}</p></div>
+      <progress class="action-progress-bar" max="${scope.length}" value="${doneCount}">${doneCount} of ${scope.length}</progress></section>`
+    : "";
+
   const decidedNotice = decided?.actionId
     ? `<p class="panel action-saved" role="status">${escapeHtml({ approved: "Approved", done: "Marked as done:", progress: "Progress saved for", feedback: "Message sent to the agent for", rejected: "Rejected" }[decided.outcome] || "Saved")} ${escapeHtml(decided.actionId)}. ${escapeHtml({ approved: "When the agent next files responses, it carries it out and opens a pull request for you to merge.", done: "It goes into the register when someone next asks the agent to file responses.", progress: "The action stays open for the remaining steps.", feedback: "The agent answers by updating the action when someone next asks it to file responses.", rejected: "The reason goes into the register when someone next asks the agent to file responses." }[decided.outcome] || "")}</p>`
     : "";
-  const cards = actions.map((action) => actionCard(action, { personName, hidden, viewer, open: actions.length === 1 || action.id === decided?.actionId, periodStart })).join("\n");
+  const single = actions.length === 1 && !doneActions.length && !otherActions.length;
+  const card = (action) => actionCard(action, { personName, hidden, viewer, today, periodStart, open: single || action.id === decided?.actionId });
+  const group = (className, title, count, inner) => `<section class="action-group ${className}"><h2 class="action-group-title">${escapeHtml(title)} <span class="action-group-count">${count}</span></h2>${inner}</section>`;
+
+  const mainTitle = !waitingView ? "Actions"
+    : owner && owner === viewerId ? "Needs you"
+      : owner ? `Waiting on ${personName(owner)}` : "Waiting on someone";
+  const emptyMain = waitingView && owner && owner === viewerId && !filters.q && !filters.priority && !filters.type && !filters.blocks
+    ? `<p class="empty">Nothing needs you right now.</p>`
+    : `<p class="empty">No actions match these filters. <a href="${base}?owner=&amp;status=all">Show all actions</a></p>`;
+  const main = group("action-needs", mainTitle, actions.length, actions.length ? `<div class="action-list">${actions.map(card).join("\n")}</div>` : emptyMain);
+
+  const byOwner = new Map();
+  for (const action of otherActions) {
+    if (!byOwner.has(action.ownerId)) byOwner.set(action.ownerId, []);
+    byOwner.get(action.ownerId).push(action);
+  }
+  const others = byOwner.size
+    ? group("action-others", "Waiting on others", otherActions.length, [...byOwner.entries()]
+      .sort(([a], [b]) => personName(a).localeCompare(personName(b)))
+      .map(([id, list]) => `<details class="action-owner-group"${list.some((action) => action.id === decided?.actionId) ? " open" : ""}><summary><strong>${escapeHtml(personName(id))}</strong> · ${list.length}</summary><div class="action-list">${list.map(card).join("\n")}</div></details>`).join(""))
+    : "";
+  const done = doneActions.length
+    ? group("action-done-group", "Done", doneActions.length, `<div class="action-list">${doneActions.map(card).join("\n")}</div>`)
+    : "";
+
   const intro = viewer
-    ? `Work that needs a person. Open one to see what to do. A task: do the steps, then mark it done. A decision: approve the suggested answer or message the agent to change it. You can respond to actions you own${viewer.isAdmin ? ", and to any action as an admin" : ""}.`
+    ? `What needs you now, most urgent first. Approve, choose or mark done on the card; open Background for the detail. You can respond to actions you own${viewer.isAdmin ? ", and to any action as an admin" : ""}.`
     : "Work that needs a person. Sign in on the hosted site to respond to one.";
   const body = !exists
     ? `<p class="empty">This program has no action register. Add files to the actions/ folder to start one.</p>`
-    : `${filterForm}
-    ${cards ? `<div class="action-list">${cards}</div>` : ""}${cards ? "" : `<p class="empty">No actions match these filters. <a href="${base}?owner=&amp;status=all">Show all actions</a></p>`}`;
+    : `${progress}${filterForm}${main}${others}${done}`;
   const content = `<div class="page-intro"><div>
       <p class="kicker">${escapeHtml(viewer?.name || viewer?.email || "Action register")}</p>
       <h1 class="action-heading">Actions</h1>
@@ -372,6 +434,12 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
       });
     });
     document.addEventListener("pointerdown", (event) => close(menus.find((menu) => menu.contains(event.target))));
+    // Show done is remembered in this browser.
+    const showDone = document.querySelector("[data-show-done]");
+    if (showDone) {
+      try { showDone.checked = localStorage.getItem(${JSON.stringify(ACTION_SHOW_DONE_KEY)}) === "1"; } catch {}
+      showDone.addEventListener("change", () => { try { localStorage.setItem(${JSON.stringify(ACTION_SHOW_DONE_KEY)}, showDone.checked ? "1" : "0"); } catch {} });
+    }
   </script>
 </body>
 </html>`;
@@ -383,21 +451,22 @@ const ACTION_KINDS = {
   fix: { label: ACTION_KIND_LABELS.fix, lead: "What needs fixing", answer: "Steps", primary: "done" },
   external: { label: ACTION_KIND_LABELS.external, lead: "What needs doing", answer: "Steps", primary: "done" },
   decision: { label: ACTION_KIND_LABELS.decision, lead: "Question", answer: "Suggested answer", primary: "approve" },
-  approval: { label: ACTION_KIND_LABELS.approval, lead: "What needs your sign-off", answer: "What you are signing off", primary: "approve", approveHelp: "You agree with what you are signing off. When the agent next files responses, it records your sign-off and opens a pull request for you to merge." },
-  information: { label: ACTION_KIND_LABELS.information, lead: "What we need to know", answer: "Suggested answer", primary: "approve", approveHelp: "The suggested answer is correct. If it is wrong, message the agent with the right answer instead; it updates the action for you to approve." }
+  approval: { label: ACTION_KIND_LABELS.approval, lead: "What needs your sign-off", answer: "What you are signing off", primary: "approve" },
+  information: { label: ACTION_KIND_LABELS.information, lead: "What we need to know", answer: "Suggested answer", primary: "approve" }
 };
 const ACTION_RESPONSES = {
-  approve: { button: "Approve", submit: "Approve", help: "The suggested answer is right. When the agent next files responses, it carries it out and opens a pull request for you to merge.", optional: "Anything to add for the audit record? (optional)" },
   done: { button: "Mark as done", submit: "Mark as done", help: "You finished every step. What you write here goes in the audit record.", field: "What did you do, and when?", placeholder: "Restricted the Drive sharing to named people and rotated the API key on 4 Nov." },
   progress: { button: "Done part of it", submit: "Save progress", help: "Some steps are done. The action stays open with the rest. What you write here goes in the audit record.", field: "What have you done so far?", placeholder: "Step 1 done: restricted the Drive sharing on 4 Nov." },
   feedback: { button: "Message the agent", submit: "Send to the agent", help: "A question or a change to the suggested answer. Only the agent reads this; it is not copied into the audit record.", field: "Your message to the agent", placeholder: "Step 3 is wrong: the key is in Secret Manager, not the doc. Please update the steps." },
   reject: { button: "Won't do", submit: "Reject", help: "This should not be done as suggested. Give the reason; it goes in the audit record.", field: "Why not?", placeholder: "" }
 };
 
-function actionCard(action, { personName, hidden, viewer, open, periodStart = null }) {
+// One action as a card: the title is the ask, then the short why, any tables, and
+// the buttons. The long suggested answer, evidence, links and history sit under a
+// closed Background disclosure.
+function actionCard(action, { personName, hidden, viewer, today, periodStart = null, open = false }) {
   const id = escapeHtml(action.id);
   const kind = Object.hasOwn(ACTION_KINDS, action.kind) ? ACTION_KINDS[action.kind] : ACTION_KINDS.decision;
-  const today = new Date().toISOString().slice(0, 10);
   const waiting = ["open", "proposed"].includes(action.status);
   const task = actionTaskStatus(action, today);
   const tags = [
@@ -406,8 +475,12 @@ function actionCard(action, { personName, hidden, viewer, open, periodStart = nu
     action.priority ? `<span class="priority-chip">${escapeHtml(String(action.priority).toUpperCase())}</span>` : "",
     task ? `<span class="status-pill tone-${task.tone}" data-task-status="${task.id}">${escapeHtml(task.label)}</span>` : `<span class="status-pill tone-grey">${escapeHtml(ACTION_STATUS_LABELS[action.status] || action.status)}</span>`
   ].join("");
-  const meta = [action.id, `Owner ${personName(action.ownerId)}`, action.due ? `Due ${action.due}` : ""].filter(Boolean).map(escapeHtml).join(" · ");
-  const section = (label, html) => html ? `<section class="action-section"><h3>${label}</h3>${html}</section>` : "";
+  const meta = [personName(action.ownerId), action.due ? `Due ${action.due}` : "", action.id].filter(Boolean).map(escapeHtml).join(" · ");
+  const why = typeof action.why === "string" && action.why.trim() ? action.why : null;
+  const lead = why ?? (action.question ? String(action.question) : "");
+  const tables = actionTables(action).map((table) => `<div class="action-table">${table.title ? `<p class="action-table-title">${escapeHtml(table.title)}</p>` : ""}<div class="action-table-scroll"><table><thead><tr>${table.cols.map((col) => `<th scope="col">${escapeHtml(col)}</th>`).join("")}</tr></thead><tbody>${table.rows.map((row) => `<tr>${row.map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>${table.note ? `<p class="action-table-note">${escapeHtml(table.note)}</p>` : ""}</div>`).join("");
+
+  const section = (label, html) => html ? `<section class="action-section"><h4>${label}</h4>${html}</section>` : "";
   const evidence = Array.isArray(action.evidence) && action.evidence.length
     ? `<ul class="action-links">${action.evidence.map(linkItem).join("")}</ul>` : "";
   const links = Array.isArray(action.links) && action.links.length
@@ -418,38 +491,49 @@ function actionCard(action, { personName, hidden, viewer, open, periodStart = nu
   const entry = (decision, extra = "") => `<li><strong>${escapeHtml(ACTION_OUTCOME_LABELS[decision.outcome] || decision.outcome)}</strong> · ${escapeHtml(personName(decision.by))} · ${escapeHtml(formatUtc(decision.on))}${extra}${decision.note ? `<div class="action-entry-note">${escapeHtml(decision.note)}</div>` : ""}</li>`;
   const history = (Array.isArray(action.history) ? action.history : []).filter((item) => item && typeof item === "object").map((item) => entry(item)).join("");
   const pending = (action.pendingDecisions ?? []).map((decision) => entry(decision, ' · <span class="action-entry-pending">not yet in the register</span>')).join("");
-  const responses = [kind.primary, kind.primary === "done" ? "progress" : null, "feedback", "reject"].filter(Boolean)
-    .filter((response) => response !== "approve" || action.suggestedAnswer);
-  // One choice row; each choice shows its own form below it. Radios keep it
-  // working without script: the form for the checked choice is the one shown.
-  const choice = (response) => `<input class="sr-only action-choice" type="radio" name="respond-${id}" id="${id}-pick-${response}" value="${response}"><label class="button${response === kind.primary ? " primary" : " outline"}" for="${id}-pick-${response}">${escapeHtml(response === "reject" && kind.primary === "approve" ? "Reject" : ACTION_RESPONSES[response].button)}</label>`;
+
+  // Approve is one click: a plain form per option, or one Approve form for the
+  // suggested answer. Responses that need a note are radios that reveal their
+  // form, which keeps them working without script.
+  const options = kind.primary === "approve" ? actionOptions(action) : [];
+  const canApprove = kind.primary === "approve" && (options.length > 0 || Boolean(action.suggestedAnswer));
+  const approveFields = (option = null) => `<input type="hidden" name="actionId" value="${id}"><input type="hidden" name="decision" value="approve">${option ? `<input type="hidden" name="option" value="${escapeHtml(option.value)}">` : ""}<input type="hidden" name="answerRevision" value="${escapeHtml(action.answerRevision ?? "")}">${action.pullRequestVersions ? `<input type="hidden" name="pullRequestVersions" value="${escapeHtml(action.pullRequestVersions)}">` : ""}${hidden}`;
+  const optionForms = options.map((option) => `<form class="action-option" method="post" action="/actions">${approveFields(option)}<button class="button${option.recommended ? " primary" : " outline"}" type="submit">${escapeHtml(option.label)}</button>${option.detail ? `<small>${escapeHtml(option.detail)}</small>` : ""}</form>`).join("");
+  const quickApprove = canApprove && !options.length
+    ? `<form class="action-quick" method="post" action="/actions">${approveFields()}<button class="button primary" type="submit">Approve</button></form>`
+    : "";
+  const reveal = [kind.primary === "done" ? "done" : null, kind.primary === "done" ? "progress" : null, "feedback", "reject"].filter(Boolean);
+  const choice = (response) => `<input class="sr-only action-choice" type="radio" name="respond-${id}" id="${id}-pick-${response}" value="${response}"><label class="button${response === "done" ? " primary" : " outline"}" for="${id}-pick-${response}">${escapeHtml(response === "reject" && kind.primary === "approve" ? "Reject" : ACTION_RESPONSES[response].button)}</label>`;
   const form = (response) => {
     const copy = ACTION_RESPONSES[response];
-    const field = copy.field || copy.optional;
     return `<form class="action-response" data-response="${response}" method="post" action="/actions">
-        <input type="hidden" name="actionId" value="${id}"><input type="hidden" name="decision" value="${response}">${response === "approve" ? `<input type="hidden" name="answerRevision" value="${escapeHtml(action.answerRevision ?? "")}">` : ""}${response === "approve" && action.pullRequestVersions ? `<input type="hidden" name="pullRequestVersions" value="${escapeHtml(action.pullRequestVersions)}">` : ""}${hidden}
-        <p class="action-response-help">${escapeHtml(response === "approve" && kind.approveHelp ? kind.approveHelp : copy.help)}</p>${response === "approve" ? pullRequestScope(action) : ""}
-        <label for="${id}-${response}-note">${escapeHtml(field)}</label>
-        <textarea id="${id}-${response}-note" name="note" rows="5" maxlength="4000"${copy.field ? " required" : ""}${copy.placeholder ? ` placeholder="${escapeHtml(copy.placeholder)}"` : ""}></textarea>
+        <input type="hidden" name="actionId" value="${id}"><input type="hidden" name="decision" value="${response}">${hidden}
+        <p class="action-response-help">${escapeHtml(copy.help)}</p>
+        <label for="${id}-${response}-note">${escapeHtml(copy.field)}</label>
+        <textarea id="${id}-${response}-note" name="note" rows="4" maxlength="4000" required${copy.placeholder ? ` placeholder="${escapeHtml(copy.placeholder)}"` : ""}></textarea>
         <div class="action-response-submit"><button class="button${response === "reject" ? "" : " primary"}" type="submit">${escapeHtml(copy.submit)}</button></div>
       </form>`;
   };
-  const decide = action.canDecide
-    ? `<section class="action-respond" aria-label="Respond to ${id}"><h3>Your response</h3><div class="action-response-choices" role="radiogroup" aria-label="Choose a response">${responses.map(choice).join("")}</div>${responses.map(form).join("")}</section>`
+  const respond = action.canDecide
+    ? `<section class="action-respond" aria-label="Respond to ${id}">${canApprove ? pullRequestScope(action) : ""}${optionForms ? `<div class="action-options" role="group" aria-label="Choose an answer">${optionForms}</div>` : ""}<div class="action-response-choices">${quickApprove}${reveal.map(choice).join("")}</div>${reveal.map(form).join("")}</section>`
     : viewer && waiting
       ? `<p class="action-note">Only ${escapeHtml(personName(action.ownerId))} or an admin can respond to this action.</p>`
       : "";
-  return `<details class="panel action-card" id="${id}"${open ? " open" : ""}>
-    <summary class="action-summary"><span class="action-summary-main"><strong class="action-title">${escapeHtml(action.title || action.id)}</strong><small>${meta}</small></span><span class="action-tags">${tags}</span></summary>
-    <div class="action-body">
-    ${section(kind.lead, action.question ? `<div class="markdown">${renderMarkdown(String(action.question))}</div>` : "")}
-    ${section(kind.answer, action.suggestedAnswer ? `<div class="markdown">${renderMarkdown(String(action.suggestedAnswer))}</div>` : "")}
-    ${section("Evidence", evidence)}
-    ${section("Links", links)}
-    ${history || pending ? section("History", `<ul class="action-record">${history}${pending}</ul>${pending ? '<p class="action-note">Saved. It goes into the register when someone next asks the agent to file responses.</p>' : ""}`) : ""}
-    ${decide}
-    </div>
-  </details>`;
+  const background = [
+    why && action.question ? section(kind.lead, `<div class="markdown">${renderMarkdown(String(action.question))}</div>`) : "",
+    section(kind.answer, action.suggestedAnswer ? `<div class="markdown">${renderMarkdown(String(action.suggestedAnswer))}</div>` : ""),
+    section("Evidence", evidence),
+    section("Links", links),
+    history || pending ? section("History", `<ul class="action-record">${history}${pending}</ul>`) : ""
+  ].join("");
+  return `<article class="panel action-card${waiting ? "" : " is-closed"}" id="${id}">
+    <header class="action-card-head"><div class="action-card-main"><h3 class="action-title">${escapeHtml(action.title || action.id)}</h3><p class="action-meta">${meta}</p></div><div class="action-tags">${tags}</div></header>
+    ${lead ? `<div class="action-why markdown">${renderMarkdown(lead)}</div>` : ""}
+    ${tables}
+    ${respond}
+    ${pending ? '<p class="action-note action-pending-note">Your response is saved. It goes into the register when someone next asks the agent to file responses.</p>' : ""}
+    ${background ? `<details class="action-background"${open ? " open" : ""}><summary>Background</summary><div class="action-background-body">${background}</div></details>` : ""}
+  </article>`;
 }
 
 // Which version of each linked pull request an Approve covers, read when the page was built.
@@ -1318,6 +1402,14 @@ function wireActionsPage(main, route) {
     });
   });
   main.querySelector(".action-page")?.addEventListener("pointerdown", (event) => close(menus.find((menu) => menu.contains(event.target))));
+  // Show done is a CSS toggle; the browser remembers it between visits.
+  const showDone = main.querySelector("[data-show-done]");
+  if (showDone) {
+    try { showDone.checked = window.localStorage.getItem(${JSON.stringify(ACTION_SHOW_DONE_KEY)}) === "1"; } catch {}
+    showDone.addEventListener("change", () => {
+      try { window.localStorage.setItem(${JSON.stringify(ACTION_SHOW_DONE_KEY)}, showDone.checked ? "1" : "0"); } catch {}
+    });
+  }
 }
 
 function overviewSectionStatus(section, label) {
@@ -8693,10 +8785,10 @@ html:has(>body.standalone-page),body.standalone-page{height:auto;overflow:visibl
 .ack-confirm{position:sticky;bottom:0;z-index:5;margin:0 -24px;padding:14px 24px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--panel);box-shadow:0 -6px 18px rgba(0,0,53,.06)}.ack-confirm p{margin:0 0 10px;color:var(--muted);font-size:14px}.ack-confirm-actions{display:flex;flex-wrap:wrap;gap:10px}.ack-confirm .button{min-height:44px;white-space:normal}.ack-footer{margin:28px 0 40px;color:var(--muted);font-size:14px}.ack-footer a{color:var(--accent)}
 .server-page .ack-page{margin:0;padding:0}
 @media(max-width:620px){.ack-page{padding:20px 16px 0}.ack-head h1,.ack-reader-head h1{font-size:24px}.ack-row{flex-direction:column;align-items:stretch;gap:12px;padding:14px 16px}.ack-row-status{justify-content:space-between}.ack-confirm{margin:0 -16px;padding:12px 16px calc(12px + env(safe-area-inset-bottom))}.ack-confirm-actions .button{flex:1 1 100%}}
-.action-page{max-width:1040px}.action-heading{margin:4px 0 6px;font-size:24px}.action-filters{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:flex-end;margin:14px 0}.action-filters label{display:grid;gap:4px;font-size:12px;font-weight:700}.action-filters select{min-height:40px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink)}.action-filters .action-check{display:flex;align-items:center;gap:8px;min-height:40px}.action-filters .action-check input{width:20px;height:20px}.action-count{color:var(--muted);font-size:13px}
-.action-list{display:grid;gap:10px}.action-card{margin:0;padding:0}.action-card>.action-summary{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;cursor:pointer;list-style:none}.action-card>.action-summary::-webkit-details-marker{display:none}.action-card>.action-summary::before{content:"";flex:0 0 auto;width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(-45deg);transition:transform .15s}.action-card[open]>.action-summary::before{transform:rotate(45deg)}.action-summary-main{flex:1 1 auto;min-width:0}.action-title{display:block;font-size:15.5px;font-weight:600;line-height:1.35}.action-summary-main small{display:block;margin-top:3px;color:var(--muted);font-size:12.5px}.action-tags{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex:0 1 auto}.action-body{padding:2px 18px 18px 40px;border-top:1px solid var(--line)}.action-section h3,.action-respond h3{margin:16px 0 6px;font-size:12px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}.action-section .markdown{max-width:72ch}.action-links{margin:0;padding-left:20px}.action-links li{margin:3px 0;overflow-wrap:anywhere}.action-note{color:var(--muted);font-size:13px}.action-record{margin:0;padding:0;list-style:none;display:grid;gap:8px}.action-record li{padding:8px 12px;border-left:3px solid var(--line);font-size:13px}.action-entry-note{margin-top:3px;white-space:pre-wrap}.action-entry-pending{color:var(--muted);font-style:italic}.action-saved{border-left:3px solid var(--accent)}
-.action-respond{margin-top:18px;border-top:1px solid var(--line)}.action-response-choices{position:relative;display:flex;flex-wrap:wrap;gap:8px}.action-response-choices label{cursor:pointer;min-height:40px}.action-choice:checked+label{box-shadow:0 0 0 2px var(--focus)}.action-choice:focus-visible+label{outline:2px solid var(--focus);outline-offset:2px}.action-response{display:none;gap:8px;margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:10px}.action-respond:has(.action-choice[value=approve]:checked) .action-response[data-response=approve]{display:grid}.action-respond:has(.action-choice[value=done]:checked) .action-response[data-response=done]{display:grid}.action-respond:has(.action-choice[value=progress]:checked) .action-response[data-response=progress]{display:grid}.action-respond:has(.action-choice[value=feedback]:checked) .action-response[data-response=feedback]{display:grid}.action-respond:has(.action-choice[value=reject]:checked) .action-response[data-response=reject]{display:grid}.action-response-help{margin:0;color:var(--muted);font-size:13px}.action-pull-requests{margin:0;padding-left:18px;font-size:13px}.action-response label{font-weight:650;font-size:13.5px}.action-response textarea{width:100%;min-height:120px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--field,#fff);color:var(--ink);font:inherit;font-size:14px;line-height:1.5;resize:vertical}.action-response-submit{display:flex;justify-content:flex-end}
-@media(max-width:620px){.action-filters label{flex:1 1 100%}.action-filters select{width:100%}.action-card>.action-summary{flex-wrap:wrap;padding:12px 14px}.action-tags{justify-content:flex-start}.action-body{padding:2px 14px 14px}.action-response-choices label{flex:1 1 100%;justify-content:center}.action-response-submit .button{width:100%}}
+.action-page{max-width:1040px}.action-heading{margin:4px 0 6px;font-size:24px}
+.action-list{display:grid;gap:10px}.action-card{margin:0;padding:16px 18px;display:grid;gap:10px}.action-card.is-closed{opacity:.85}.action-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.action-card-main{flex:1 1 auto;min-width:0}.action-title{margin:0;font-size:15.5px;font-weight:600;line-height:1.35}.action-meta{margin:3px 0 0;color:var(--muted);font-size:12.5px}.action-tags{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex:0 1 auto}.action-why{max-width:72ch;font-size:14px}.action-why>:first-child{margin-top:0}.action-why>:last-child{margin-bottom:0}.action-table-title{margin:0 0 4px;font-size:13px;font-weight:650}.action-table-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:8px}.action-table table{width:100%;border-collapse:collapse;font-size:13px}.action-table th,.action-table td{padding:6px 10px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}.action-table th{font-weight:650;color:var(--muted);background:var(--paper)}.action-table tr:last-child td{border-bottom:0}.action-table-note{margin:4px 0 0;color:var(--muted);font-size:12.5px}.action-background{border-top:1px solid var(--line);padding-top:8px}.action-background>summary{cursor:pointer;color:var(--muted);font-size:13px;font-weight:650}.action-section h4{margin:14px 0 6px;font-size:12px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}.action-section .markdown{max-width:72ch}.action-links{margin:0;padding-left:20px}.action-links li{margin:3px 0;overflow-wrap:anywhere}.action-note{margin:0;color:var(--muted);font-size:13px}.action-record{margin:0;padding:0;list-style:none;display:grid;gap:8px}.action-record li{padding:8px 12px;border-left:3px solid var(--line);font-size:13px}.action-entry-note{margin-top:3px;white-space:pre-wrap}.action-entry-pending{color:var(--muted);font-style:italic}.action-saved{border-left:3px solid var(--accent)}.action-progress{display:grid;gap:8px;padding:14px 18px;margin:0 0 14px}.action-progress-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}.action-progress-head p{margin:0}.action-progress-who{color:var(--muted);font-size:13px}.action-progress-detail{display:flex;flex-wrap:wrap;gap:6px;align-items:center;color:var(--muted);font-size:13px}.action-progress-bar{width:100%;height:8px;accent-color:var(--accent)}.action-people{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}.action-people a{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:4px 12px;border:1px solid var(--line);border-radius:999px;font-size:13px;text-decoration:none}.action-people a[aria-current=true]{border-color:var(--ink);font-weight:650}.action-person-count{color:var(--muted);font-size:12px}.action-show-done{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:13px}.action-show-done input{width:18px;height:18px}.action-group{margin:18px 0}.action-group-title{margin:0 0 10px;font-size:16px}.action-group-count{color:var(--muted);font-weight:500}.action-done-group{display:none}.action-page:has(#action-show-done:checked) .action-done-group{display:block}.action-owner-group{margin:0 0 8px}.action-owner-group>summary{cursor:pointer;padding:8px 0;font-size:14px}.action-owner-group>.action-list{margin:4px 0 10px}
+.action-respond{display:grid;gap:8px}.action-options{display:grid;gap:8px}.action-option{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}.action-option small{color:var(--muted);font-size:12.5px}.action-quick{display:contents}.action-response-choices{position:relative;display:flex;flex-wrap:wrap;gap:8px}.action-response-choices label{cursor:pointer;min-height:40px}.action-choice:checked+label{box-shadow:0 0 0 2px var(--focus)}.action-choice:focus-visible+label{outline:2px solid var(--focus);outline-offset:2px}.action-response{display:none;gap:8px;padding:14px;border:1px solid var(--line);border-radius:10px}.action-respond:has(.action-choice[value=done]:checked) .action-response[data-response=done]{display:grid}.action-respond:has(.action-choice[value=progress]:checked) .action-response[data-response=progress]{display:grid}.action-respond:has(.action-choice[value=feedback]:checked) .action-response[data-response=feedback]{display:grid}.action-respond:has(.action-choice[value=reject]:checked) .action-response[data-response=reject]{display:grid}.action-response-help{margin:0;color:var(--muted);font-size:13px}.action-pull-requests{margin:0;padding-left:18px;font-size:13px}.action-response label{font-weight:650;font-size:13.5px}.action-response textarea{width:100%;min-height:96px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--field,#fff);color:var(--ink);font:inherit;font-size:14px;line-height:1.5;resize:vertical}.action-response-submit{display:flex;justify-content:flex-end}
+@media(max-width:620px){.action-card{padding:12px 14px}.action-card-head{flex-wrap:wrap}.action-tags{justify-content:flex-start}.action-response-choices label,.action-response-choices .button{flex:1 1 100%;justify-content:center}.action-option .button{flex:1 1 100%;justify-content:center}.action-response-submit .button{width:100%}.action-show-done{flex:1 1 auto}}
 .filter-bar{margin:0 0 14px}.filter-toolbar{display:flex;align-items:center;gap:8px;min-width:0}.filter-search{flex:1 1 220px;min-width:0}.filter-search input{width:100%;min-height:38px;border:1px solid var(--line);border-radius:7px;background:var(--field,#fff);color:var(--ink);padding:8px 11px;font-size:14px}.filter-buttons{display:flex;gap:6px;flex-wrap:wrap}.filter-menu{position:relative}.filter-menu>summary{display:inline-flex;align-items:center;gap:5px;min-height:38px;padding:0 11px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink);font-size:13px;font-weight:650;white-space:nowrap;cursor:pointer;list-style:none}.filter-menu>summary::-webkit-details-marker{display:none}.filter-menu.active>summary{border-color:var(--accent);color:var(--accent)}.filter-menu>summary:focus-visible,.filter-options button:focus-visible,.filter-chip:focus-visible,.filter-clear:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.filter-caret{font-size:10px}.filter-options{position:absolute;z-index:30;top:calc(100% + 4px);left:0;display:grid;min-width:180px;max-width:min(320px,calc(100vw - 32px));max-height:320px;overflow:auto;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 8px 24px rgba(0,0,0,.14)}.filter-options button{padding:8px 10px;border:0;border-radius:6px;background:none;color:var(--ink);text-align:left;font-size:13px;cursor:pointer;overflow-wrap:anywhere}.filter-options button:hover{background:var(--accent-soft)}.filter-options button[aria-pressed="true"]{font-weight:750;color:var(--accent)}.filter-options a{display:block;padding:8px 10px;border-radius:6px;color:var(--ink);text-decoration:none;font-size:13px}.filter-options a:hover{background:var(--accent-soft)}.filter-options a[aria-current="true"]{font-weight:750;color:var(--accent)}.filter-count{margin-left:auto;color:var(--muted);font-size:12px;white-space:nowrap}.filter-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}.filter-chip{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--accent-soft);color:var(--ink);font-size:12px;text-decoration:none;cursor:pointer}.filter-clear{border:0;background:none;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;padding:4px}
 @media(max-width:620px){.filter-toolbar{flex-wrap:wrap}.filter-search{flex:1 1 100%}.filter-buttons{flex:1 1 auto}.filter-menu:last-child .filter-options{left:auto;right:0}}
 .suggest-change-dialog{width:min(560px,calc(100vw - 32px))}.suggest-change-body{display:grid;gap:8px;margin-top:12px}.suggest-change-body label{font-weight:700;font-size:13px}.suggest-change-body textarea{width:100%;padding:9px;border:1px solid var(--line);border-radius:7px;background:var(--field,#fff);color:var(--ink)}.suggest-change-help{font-size:13px}.suggest-change-help summary{cursor:pointer;font-weight:700;padding:4px 0}.suggest-change-help h3{margin:12px 0 4px;font-size:13px}.suggest-change-help code{overflow-wrap:anywhere}.suggest-change-sent{margin:0;padding:10px 12px;border-radius:8px;background:var(--accent-soft);font-weight:650}.suggest-change-dialog .dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap}
