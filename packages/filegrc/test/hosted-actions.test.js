@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import vm from "node:vm";
-import { actionAnswerRevision, actionOptions, actionPullRequests, actionTables, answerRevision, applyPendingDecisions, actionFilters, createActionRegister, filterActions, githubRepositoryFromRemote, summarizeActions } from "../src/action-register.js";
+import { actionAnswerRevision, actionOptions, actionPullRequests, actionTables, answerRevision, applyPendingDecisions, actionFilters, actionWaitingOn, createActionRegister, filterActions, githubRepositoryFromRemote, resolveWaitingOn, summarizeActions } from "../src/action-register.js";
 import { runCli } from "../src/cli.js";
 import { signSession } from "../src/hosted-auth.js";
 import { serveWorkspace } from "../src/server.js";
@@ -676,7 +676,7 @@ test("the overview summary counts the signed-in person's waiting actions, or eve
     action("D", { status: "done" })
   ], { viewerPersonId: OWNER, today: "2026-11-03" });
   assert.equal(summary.scope, "viewer");
-  assert.deepEqual(summary.counts, { waiting: 2, blocking: 1, overdue: 1, waitingEveryone: 3, blockingEveryone: 2, overdueEveryone: 1, toReview: 2, toReviewEveryone: 3, dueSoonEveryone: 0 });
+  assert.deepEqual(summary.counts, { waiting: 2, blocking: 1, overdue: 1, waitingEveryone: 3, blockingEveryone: 2, overdueEveryone: 1, toReview: 2, toReviewEveryone: 3, dueSoonEveryone: 0, blocked: 0, blockedEveryone: 0 });
   assert.deepEqual(summary.items.map(({ id, overdue }) => [id, overdue]), [["A", true], ["B", false]]);
   assert.equal(summarizeActions([action("B", { due: "2026-12-01" })], { today: "2026-11-17" }).counts.dueSoonEveryone, 1);
   assert.equal(summarizeActions([action("B", { due: "2026-12-01" })], { today: "2026-11-16" }).counts.dueSoonEveryone, 0);
@@ -692,6 +692,82 @@ test("the overview summary counts the signed-in person's waiting actions, or eve
   assert.equal(body.summary.items[0].ownerName.length > 0, true);
   const anonymous = await fetch(`${url}/api/actions/summary`, { redirect: "manual" });
   assert.equal(anonymous.status, 401);
+});
+
+test("waitingOn blocks an action while what it waits on is open, and releases it once that is settled", () => {
+  assert.deepEqual(actionWaitingOn(action("A", { waitingOn: [{ action: " B " }, { label: "Sprinto's answer", until: "2026-12-01" }, { label: "x", until: "soon" }, { until: "2026-12-01" }, "B", null] })),
+    [{ action: "B" }, { label: "Sprinto's answer", until: "2026-12-01" }, { label: "x" }]);
+  assert.deepEqual(actionWaitingOn(action("A")), []);
+  const blockedBy = (actions, id) => resolveWaitingOn(actions).actions.find((item) => item.id === id).blockedBy;
+  for (const status of ["open", "proposed", "accepted"]) {
+    assert.deepEqual(blockedBy([action("A", { waitingOn: [{ action: "B" }] }), action("B", { status })], "A"), [{ action: "B", title: "Question B", status }]);
+  }
+  for (const status of ["done", "dropped", "rejected"]) {
+    assert.deepEqual(blockedBy([action("A", { waitingOn: [{ action: "B" }] }), action("B", { status })], "A"), [], `${status} no longer blocks`);
+  }
+  assert.deepEqual(blockedBy([action("A", { waitingOn: [{ label: "Sprinto's answer" }] })], "A"), [{ label: "Sprinto's answer" }], "a label blocks until it is removed");
+  assert.deepEqual(blockedBy([action("A", { status: "done", waitingOn: [{ label: "Sprinto" }] })], "A"), [], "a closed action is never blocked");
+
+  const { actions, problems } = resolveWaitingOn([
+    action("A", { waitingOn: [{ action: "ACT-404" }, { action: "A" }] }),
+    action("B", { waitingOn: "C" })
+  ]);
+  assert.deepEqual(actions.map(({ blockedBy: list }) => list), [[], []]);
+  assert.deepEqual(problems, [
+    "A waits on ACT-404, which is not in the register, so that entry does not block it.",
+    "A waits on A, which is not another action, so that entry does not block it.",
+    "B has a waitingOn that is not a list, so it is not treated as blocked."
+  ]);
+
+  // A response not yet filed counts: marking B done releases A at once.
+  const pending = applyPendingDecisions([action("A", { waitingOn: [{ action: "B" }] }), action("B", { kind: "fix", status: "open" })],
+    [{ id: "20261120T000000000Z-aaaaaa", actionId: "B", outcome: "done", by: OWNER, on: "2026-11-20T00:00:00.000Z", note: "Done." }]);
+  assert.deepEqual(blockedBy(pending, "A"), []);
+
+  const summary = summarizeActions([
+    action("A", { waitingOn: [{ action: "B" }], blocksPeriodStart: true }),
+    action("B", { ownerId: OTHER }),
+    action("C", { waitingOn: [{ label: "Sprinto" }], ownerId: OTHER }),
+    action("D")
+  ], { viewerPersonId: OWNER, today: "2026-11-03" });
+  assert.equal(summary.counts.waiting, 1);
+  assert.equal(summary.counts.blocking, 0, "a blocked action is not counted as blocking the start");
+  assert.equal(summary.counts.waitingEveryone, 2);
+  assert.equal(summary.counts.blocked, 1);
+  assert.equal(summary.counts.blockedEveryone, 2);
+  assert.deepEqual(summary.items.map(({ id }) => id), ["D"]);
+});
+
+test("Needs you moves blocked actions into a closed Blocked group and every card says what it waits on", async (context) => {
+  const { root, url, as, page } = await fixture(context);
+  await writeFile(join(root, "actions", "ACT-004.json"), json(action("ACT-004", { waitingOn: [{ action: "ACT-002" }] })));
+  await writeFile(join(root, "actions", "ACT-005.json"), json(action("ACT-005", { waitingOn: [{ label: "Sprinto's answer on the extension", until: "2026-12-01" }] })));
+  await writeFile(join(root, "actions", "ACT-006.json"), json(action("ACT-006", { waitingOn: [{ action: "ACT-003" }, { action: "ACT-999" }] })));
+
+  const mine = await page(OWNER);
+  const needs = group(mine.body, "action-needs");
+  assert.match(needs, /<h2 class="action-group-title">Needs you <span class="action-group-count">2<\/span><\/h2>/);
+  const [list, blocked] = needs.split('<details class="action-blocked-group">');
+  assert.match(list, /id="ACT-001"/);
+  assert.match(list, /id="ACT-006"/, "waiting on a done action or an unknown one does not block");
+  assert.doesNotMatch(list, /id="ACT-00[45]"/);
+  assert.match(blocked, /^<summary><strong>Blocked<\/strong> · 2<\/summary>/);
+  assert.match(blocked, /id="ACT-004"[\s\S]*<p class="action-waiting-on">Waiting on: <a href="\/actions\?q=ACT-002&amp;owner=&amp;status=all">ACT-002<\/a> Other &lt;script&gt;x&lt;\/script&gt;<\/p>/);
+  assert.match(blocked, /id="ACT-005"[\s\S]*<p class="action-waiting-on">Waiting on: Sprinto&#39;s answer on the extension <span class="action-waiting-until">\(until 2026-12-01\)<\/span><\/p>/);
+  assert.doesNotMatch(list, /action-waiting-on/);
+  assert.match(mine.body, /ACT-006 waits on ACT-999, which is not in the register, so that entry does not block it\./);
+  assert.match(mine.body, /aria-current="true">Me <span class="action-person-count" aria-label="2 waiting">2<\/span><\/a>/);
+
+  // The line shows in every view, not only Needs you.
+  const everyone = await page(OWNER, "?owner=&status=all");
+  assert.doesNotMatch(everyone.body, /action-blocked-group/);
+  assert.match(everyone.body, /id="ACT-004"[\s\S]*?<p class="action-waiting-on">Waiting on: <a href="\/actions[^"]*">ACT-002<\/a>/);
+
+  const response = await fetch(`${url}/api/actions/summary`, { headers: { cookie: as(OWNER) } });
+  const { summary } = await response.json();
+  assert.equal(summary.counts.waiting, 2);
+  assert.equal(summary.counts.blocked, 2);
+  assert.deepEqual(summary.items.map(({ id }) => id), ["ACT-001", "ACT-006"]);
 });
 
 test("Actions opens inside the app: browsers are sent to #/actions and the app loads a fragment", async (context) => {

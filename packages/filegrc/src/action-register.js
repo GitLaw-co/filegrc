@@ -101,6 +101,64 @@ export function actionTables(action) {
     });
 }
 
+// What an action waits on, from the optional `waitingOn` field: each entry is
+// `{ action: "<ID>" }` (another action in the register) or `{ label, until? }`
+// (an outside party; `until` is a YYYY-MM-DD date shown beside it). Entries of
+// neither shape are dropped.
+export function actionWaitingOn(action) {
+  if (!Array.isArray(action?.waitingOn)) return [];
+  const entries = [];
+  for (const entry of action.waitingOn) {
+    if (!entry || typeof entry !== "object") continue;
+    const target = typeof entry.action === "string" ? entry.action.trim() : "";
+    const label = typeof entry.label === "string" ? entry.label.trim() : "";
+    if (target) entries.push({ action: target });
+    else if (label) {
+      const until = typeof entry.until === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.until) ? entry.until : null;
+      entries.push({ label, ...(until ? { until } : {}) });
+    }
+  }
+  return entries;
+}
+
+const SETTLED = new Set(["done", "dropped", "rejected"]);
+
+// Each action with `blockedBy`: what it waits on that still blocks it. An open or
+// proposed action is blocked while an action it waits on is not done, dropped or
+// rejected, or while it lists an outside party (until someone removes the entry).
+// A closed action is never blocked. An entry naming an action that is not in the
+// register, or the action itself, does not block and is reported as a problem.
+export function resolveWaitingOn(actions) {
+  const byId = new Map(actions.map((action) => [action.id, action]));
+  const problems = [];
+  const resolved = actions.map((action) => {
+    const blockedBy = [];
+    if (DECIDABLE.has(action.status)) {
+      if (action.waitingOn !== undefined && action.waitingOn !== null && !Array.isArray(action.waitingOn)) {
+        problems.push(`${action.id} has a waitingOn that is not a list, so it is not treated as blocked.`);
+      }
+      for (const entry of actionWaitingOn(action)) {
+        if (entry.label) {
+          blockedBy.push(entry);
+          continue;
+        }
+        const target = entry.action === action.id ? null : byId.get(entry.action);
+        if (!target) {
+          problems.push(`${action.id} waits on ${entry.action}, which is not ${entry.action === action.id ? "another action" : "in the register"}, so that entry does not block it.`);
+          continue;
+        }
+        if (!SETTLED.has(target.status)) blockedBy.push({ action: target.id, title: target.title || target.id, status: target.status });
+      }
+    }
+    return { ...action, blockedBy };
+  });
+  return { actions: resolved, problems };
+}
+
+export function isActionBlocked(action) {
+  return DECIDABLE.has(action?.status) && Array.isArray(action.blockedBy) && action.blockedBy.length > 0;
+}
+
 // What an Approve is bound to: the suggested answer, and the choices when the
 // action offers some. An action without options keeps answerRevision(suggestedAnswer).
 export function actionAnswerRevision(action) {
@@ -245,9 +303,14 @@ export function filterActions(actions, filters) {
 
 // What the dashboard shows: the viewer's actions waiting for a decision (everyone's
 // when nobody is signed in), the counts behind them, and the first few to do.
+// Actions blocked by something they wait on are left out of every figure but
+// `blocked` and `blockedEveryone`, so they return once what blocks them is settled.
 export function summarizeActions(actions, { viewerPersonId = null, today = new Date().toISOString().slice(0, 10), limit = 5 } = {}) {
-  const waiting = filterActions(actions, { status: "waiting" });
+  const open = filterActions(resolveWaitingOn(actions).actions, { status: "waiting" });
+  const blockedAll = open.filter(isActionBlocked);
+  const waiting = open.filter((action) => !isActionBlocked(action));
   const mine = viewerPersonId ? waiting.filter((action) => action.ownerId === viewerPersonId) : waiting;
+  const blockedMine = viewerPersonId ? blockedAll.filter((action) => action.ownerId === viewerPersonId) : blockedAll;
   const overdue = (list) => list.filter((action) => /^\d{4}-\d{2}-\d{2}$/.test(String(action.due ?? "")) && action.due < today).length;
   const blocking = (list) => list.filter((action) => action.blocksPeriodStart === true).length;
   const horizon = new Date(Date.parse(`${today}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10);
@@ -263,7 +326,9 @@ export function summarizeActions(actions, { viewerPersonId = null, today = new D
       overdueEveryone: overdue(waiting),
       toReview: mine.filter((action) => action.status === "proposed").length,
       toReviewEveryone: waiting.filter((action) => action.status === "proposed").length,
-      dueSoonEveryone: dueSoon(waiting)
+      dueSoonEveryone: dueSoon(waiting),
+      blocked: blockedMine.length,
+      blockedEveryone: blockedAll.length
     },
     items: mine.slice(0, limit).map(({ id, title, ownerId, status, priority, due, blocksPeriodStart, kind }) => ({
       id, title, ownerId, status, priority, due, kind, blocksPeriodStart: blocksPeriodStart === true,
@@ -428,7 +493,11 @@ export function createActionRegister(input, options = {}) {
     }
     const decisions = await readDecisions(trackingRef);
     const people = loaded.resources.filter(({ type }) => type === "person");
-    const actions = await withPullRequests(applyPendingDecisions(register.actions, decisions), remote, problems);
+    // Blocking is worked out after pending decisions apply, so a dependency marked
+    // done on this page releases what waits on it straight away.
+    const waiting = resolveWaitingOn(applyPendingDecisions(register.actions, decisions));
+    problems.push(...waiting.problems);
+    const actions = await withPullRequests(waiting.actions, remote, problems);
     return { exists: true, actions, problems, decisions, people };
   }
 
