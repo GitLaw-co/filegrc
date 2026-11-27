@@ -25,7 +25,7 @@ import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
 import { auditorLinkSecretFromEnv, createAuditorView } from "./auditor-view.js";
-import { ACTION_FILTER_KEYS, actionAnswerRevision, actionDecisionsBranchFromEnv, actionFilters, canDecideAction, createActionRegister, filterActions, isActionBlocked, pullRequestVersions, summarizeActions } from "./action-register.js";
+import { ACTION_FILTER_KEYS, actionAnswerRevision, actionDecisionsBranchFromEnv, actionFilters, canDecideAction, createActionRegister, filterActions, isActionAwaitingReview, isActionBlocked, pullRequestVersions, summarizeActions } from "./action-register.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -1167,7 +1167,7 @@ function isPageNavigation(request) {
 
 async function actionRegisterExists(input) {
   try {
-    return (await readdir(join(resolveWorkspaceRoot(input), "actions"))).some((name) => name.endsWith(".json") && name !== "schema.json");
+    return (await readdir(join(resolveWorkspaceRoot(input), "actions"))).some((name) => name.endsWith(".json") && !["schema.json", "pending.json"].includes(name));
   } catch {
     return false;
   }
@@ -1198,9 +1198,11 @@ async function actions(register, request, response, url, viewer, periodStart = n
       ? filterActions(view.actions, { ...filters, owner: "" }).filter((action) => action.ownerId !== viewer.personId)
       : [];
     // In the waiting view, actions blocked by what they wait on leave the main list
-    // for a collapsed Blocked group under it.
+    // for a collapsed Blocked group under it, and those an open pull request closes
+    // for a "Done, waiting for approval" group.
     const matching = filterActions(view.actions, filters);
-    const blockedActions = waitingView ? matching.filter(isActionBlocked) : [];
+    const blockedActions = waitingView ? matching.filter((action) => isActionBlocked(action) && !isActionAwaitingReview(action)) : [];
+    const reviewActions = waitingView ? matching.filter(isActionAwaitingReview) : [];
     return text(response, status, renderActionsPage({
       viewer,
       exists: view.exists,
@@ -1208,6 +1210,7 @@ async function actions(register, request, response, url, viewer, periodStart = n
       allActions: view.actions,
       actions: ordered(waitingView ? matching.filter((action) => !isActionBlocked(action)) : matching),
       blockedActions: ordered(blockedActions),
+      reviewActions: ordered(reviewActions),
       doneActions: ordered(doneActions),
       otherActions: ordered(otherActions),
       today,
