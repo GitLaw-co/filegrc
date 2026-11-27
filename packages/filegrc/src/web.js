@@ -97,19 +97,23 @@ export function resolveWorkflowDestination(destination, options = {}) {
 // Hosted mode's one write page for staff: the policies and training the signed-in
 // person owes, what they already completed, and a reader for one owed item
 // (`?item=<subject id>`). The server decides who is attesting; the form names only the subject.
-export function renderAcknowledgementsPage({ person, items = [], completed = [], item = null, done = null, error = null, savedAside = false }) {
+// With `fragment`, it returns only the page body for the app shell (#/acknowledgements),
+// and its links stay inside the shell.
+export function renderAcknowledgementsPage({ person, items = [], completed = [], item = null, done = null, error = null, savedAside = false, fragment = false }) {
+  const base = fragment ? "#/acknowledgements" : "/acknowledgements";
+  const home = fragment ? "#/" : "/";
   const total = items.length + completed.length;
   const open = items.find(({ subjectId }) => subjectId === item);
   const finished = completed.find(({ subjectId }) => subjectId === item || subjectId === done);
   const notice = done ? `<p class="panel ack-notice" role="status">${savedAside
     ? "Recorded. Your acknowledgement is saved and is added to the program record at the next review."
     : "Recorded. Your acknowledgement is committed to the program repository."}${items.length
-    ? ` <a href="/acknowledgements?item=${encodeURIComponent(items[0].subjectId)}">Next: ${escapeHtml(items[0].title)}</a>`
+    ? ` <a href="${base}?item=${encodeURIComponent(items[0].subjectId)}">Next: ${escapeHtml(items[0].title)}</a>`
     : ""}</p>` : item && !open ? `<p class="panel ack-notice" role="status">${finished
     ? `You completed ${escapeHtml(finished.title)} on ${escapeHtml(formatCalendarDate(finished.completedOn))}.`
     : "That item is not waiting for you."}</p>` : "";
   const errorItem = error ? `<p class="panel dialog-error" role="alert">${escapeHtml(error)}</p>` : "";
-  const body = open ? acknowledgementReader(open, items) : `<header class="ack-head">
+  const body = open ? acknowledgementReader(open, items, base) : `<header class="ack-head">
       <p class="kicker">${escapeHtml(person?.title || "Signed in")}</p>
       <h1>My policies and training</h1>
       <p>For SOC 2, everyone reads the company policies and completes security training when they join and once a year after. Open each item, read it, then confirm.</p>
@@ -119,8 +123,10 @@ export function renderAcknowledgementsPage({ person, items = [], completed = [],
       </div>` : ""}
     </header>
     ${errorItem}${notice}
-    ${items.length ? "" : `<section class="ack-empty"><h2>You're up to date</h2><p>${completed.length ? "Nothing is waiting for you. What you completed is below." : "Nothing is waiting for you right now."}</p></section>`}
-    ${total ? `<ul class="ack-list">${items.map((entry) => acknowledgementRow(entry)).join("")}${completed.map((entry) => acknowledgementRow(entry, { done: true })).join("")}</ul>` : ""}`;
+    ${items.length ? "" : `<section class="ack-empty"><h2>You're up to date</h2><p>${completed.length ? "Nothing is waiting for you. What you completed is below." : "Nothing is waiting for you right now."}</p><p><a class="button primary" href="${home}">Back to the overview</a></p></section>`}
+    ${total ? `<ul class="ack-list">${items.map((entry) => acknowledgementRow(entry, { base })).join("")}${completed.map((entry) => acknowledgementRow(entry, { done: true, base })).join("")}</ul>` : ""}`;
+  const content = open ? `${errorItem}${body}` : body;
+  if (fragment) return `<div class="ack-page">${content}</div>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -132,7 +138,7 @@ export function renderAcknowledgementsPage({ person, items = [], completed = [],
 <body class="standalone-page">
   <a class="skip-link" href="#main">Skip to content</a>
   <main id="main" class="ack-page">
-    ${open ? `${errorItem}${body}` : body}
+    ${content}
     <p class="ack-footer"><a href="/">Open the program</a> · <a href="/auth/logout">Sign out</a></p>
   </main>
 </body>
@@ -152,25 +158,25 @@ function acknowledgementMeta(entry, { readingTime = false } = {}) {
   ].filter(Boolean).map(escapeHtml).join(" · ");
 }
 
-function acknowledgementRow(entry, { done = false } = {}) {
+function acknowledgementRow(entry, { done = false, base = "/acknowledgements" } = {}) {
   const type = `<span class="ack-type">${escapeHtml(ACKNOWLEDGEMENT_TYPES[entry.subjectType] || "Item")}</span>`;
   const status = done
     ? `<span class="status-pill tone-green">Done on ${escapeHtml(formatCalendarDate(entry.completedOn))}</span>`
     : `<span class="status-pill tone-amber">To do</span>`;
   const title = done
     ? `<span class="ack-row-title">${escapeHtml(entry.title)}</span>`
-    : `<a class="ack-row-title" href="/acknowledgements?item=${encodeURIComponent(entry.subjectId)}">${escapeHtml(entry.title)}</a>`;
+    : `<a class="ack-row-title" href="${base}?item=${encodeURIComponent(entry.subjectId)}">${escapeHtml(entry.title)}</a>`;
   return `<li class="ack-row${done ? " done" : ""}">
       <div class="ack-row-main">${type}${title}<span class="ack-meta">${acknowledgementMeta(entry, { readingTime: !done })}</span></div>
-      <div class="ack-row-status">${status}${done ? "" : `<a class="button primary" href="/acknowledgements?item=${encodeURIComponent(entry.subjectId)}" aria-label="Open ${escapeHtml(entry.title)}">Open</a>`}</div>
+      <div class="ack-row-status">${status}${done ? "" : `<a class="button primary" href="${base}?item=${encodeURIComponent(entry.subjectId)}" aria-label="Open ${escapeHtml(entry.title)}">Open</a>`}</div>
     </li>`;
 }
 
-function acknowledgementReader(entry, items) {
+function acknowledgementReader(entry, items, base = "/acknowledgements") {
   const index = items.indexOf(entry);
   const next = items[index + 1] || (index > 0 ? items[0] : null);
   const training = entry.attestationKind === "training";
-  return `<p class="ack-back"><a href="/acknowledgements">&larr; My policies and training</a></p>
+  return `<p class="ack-back"><a href="${base}">&larr; My policies and training</a></p>
     <header class="ack-reader-head">
       <p class="ack-tags"><span class="ack-type">${escapeHtml(ACKNOWLEDGEMENT_TYPES[entry.subjectType] || "Item")}</span><span class="status-pill tone-amber">To do</span></p>
       <h1>${escapeHtml(entry.title)}</h1>
@@ -182,7 +188,7 @@ function acknowledgementReader(entry, items) {
       <p>Item ${index + 1} of ${items.length}. Confirming records that you ${training ? "completed" : "read"} this version, with today's date.</p>
       <div class="ack-confirm-actions">
         <button class="button primary" type="submit">I have ${training ? "completed" : "read and acknowledge"} ${escapeHtml(entry.title)}</button>
-        ${next ? `<a class="button" href="/acknowledgements?item=${encodeURIComponent(next.subjectId)}">Next item</a>` : ""}
+        ${next ? `<a class="button" href="${base}?item=${encodeURIComponent(next.subjectId)}">Next item</a>` : ""}
       </div>
     </form>`;
 }
@@ -659,6 +665,7 @@ function render() {
   else if (waitingFor.length) renderStateLoading(main, route, waitingFor);
   else if (route.name === "home") renderHome(main);
   else if (route.name === "actions") renderServerPage(main, route, "/actions?" + withFragment(route.params));
+  else if (route.name === "acknowledgements") renderServerPage(main, route, "/acknowledgements?" + withFragment(route.params));
   else if (route.name === "help") renderServerPage(main, route, "/faq" + (route.slug ? "/" + encodeURIComponent(route.slug) : "") + "?fragment=1");
   else if (route.name === "stage") renderStageOverview(main, route.stageId, route.params);
   else if (route.name === "policies") renderPoliciesPage(main, route.params);
@@ -695,7 +702,7 @@ function normalizeAppState(next) {
 }
 
 function blockingStateSections(route) {
-  if (route.name === "home" || route.name === "actions" || route.name === "help") return [];
+  if (route.name === "home" || route.name === "actions" || route.name === "acknowledgements" || route.name === "help") return [];
   if (route.name === "repository") return ["repository"];
   if (route.name === "list" && ["requirement", "control", "commitment", "complementary-control"].includes(route.type)) return ["program"];
   if (route.name === "detail" && ["program", "requirement", "control", "commitment", "complementary-control"].includes(route.type)) return ["program"];
@@ -795,6 +802,7 @@ function parseRoute() {
   if (parts.length === 1 && parts[0] === "organization") return { name: "organization" };
   if (parts.length === 1 && parts[0] === "repository") return { name: "repository" };
   if (parts.length === 1 && parts[0] === "actions" && document.body.dataset.actionsHref) return { name: "actions", params: new URLSearchParams(query) };
+  if (parts.length === 1 && parts[0] === "acknowledgements" && document.body.dataset.acknowledgementsHref) return { name: "acknowledgements", params: new URLSearchParams(query) };
   if (parts[0] === "help" && parts.length <= 2 && document.body.dataset.helpHref) return { name: "help", slug: parts[1] || "", params: new URLSearchParams(query) };
   return { name: "missing" };
 }
@@ -873,6 +881,8 @@ function topbar(route) {
     ? "Dashboard"
     : route.name === "actions"
       ? "Actions"
+    : route.name === "acknowledgements"
+      ? "My policies and training"
     : route.name === "help"
       ? "Help"
     : route.name === "stage"
@@ -1027,7 +1037,7 @@ function dashboardHeader() {
   const acknowledgements = document.body.dataset.acknowledgementsHref;
   const guide = workspaceGuide();
   const buttons = (guide ? guideLink(guide, "button", guide.title) : "")
-    + (acknowledgements ? '<a class="button" href="' + esc(acknowledgements) + '">My policies and training</a>' : "")
+    + (acknowledgements ? '<a class="button" href="#/acknowledgements">My policies and training</a>' : "")
     + (document.body.dataset.actionsHref ? '<a class="button primary" href="#/actions">Open actions</a>' : "");
   return '<div class="dash-head"><div><h2>' + esc(first ? "Hello, " + first : (program.title || state.workspace.title || "Program")) + '</h2>' + (scope && first ? '<p>' + esc(scope) + '</p>' : "") + '</div><div class="dash-head-actions">' + buttons + '</div></div>';
 }
@@ -1212,7 +1222,7 @@ function renderServerPage(main, route, url, init) {
       if (!/text\/html/i.test(response.headers.get("content-type") || "")) {
         return { url: null, landed: "", html: '<p class="panel dialog-error" role="alert">This page could not load (' + esc(String(response.status)) + '). Reload and try again.</p>' };
       }
-      return { url, landed: response.url, html: await response.text() };
+      return { url, ok: response.ok, landed: response.url, html: await response.text() };
     })
     .catch(() => ({ url: null, landed: "", html: '<p class="panel dialog-error" role="alert">This page could not load. Check your connection and try again.</p>' }))
     .then((page) => {
@@ -1228,10 +1238,21 @@ function renderServerPage(main, route, url, init) {
         page.url = "/actions?" + withFragment(query);
         if (location.hash !== hash) history.replaceState(null, "", hash);
       }
+      // A confirmation lands on ?done=<id>; the hash follows it so a reload shows the same page.
+      // A refused confirmation keeps its hash and is not cached as the page for that address.
+      if (route.name === "acknowledgements" && init && !page.ok) page.url = null;
+      else if (route.name === "acknowledgements" && landed.pathname === "/acknowledgements") {
+        const query = new URLSearchParams(landed.search);
+        query.delete("fragment");
+        const hash = "#/acknowledgements" + (query.size ? "?" + query.toString() : "");
+        page.url = "/acknowledgements?" + withFragment(query);
+        if (location.hash !== hash) history.replaceState(null, "", hash);
+      }
       if (page.url) serverPageCache = page;
       const current = root.querySelector("main");
       if (!current || parseRoute().name !== route.name) return;
       paintServerPage(current, route, page);
+      if (route.name === "acknowledgements" && init) root.querySelector(".workspace")?.scrollTo({ top: 0 });
       if (decided) {
         current.querySelector("#" + CSS.escape(decided))?.scrollIntoView({ block: "start" });
         state.actionSummary = null;
@@ -1243,14 +1264,28 @@ function renderServerPage(main, route, url, init) {
 function paintServerPage(main, route, page) {
   main.innerHTML = '<div class="page server-page">' + page.html + '</div>';
   if (route.name === "actions") wireActionsPage(main, route);
-  // In-page links in a help article (#section) scroll instead of changing the app route.
-  if (route.name === "help") {
-    main.querySelector(".help-article")?.addEventListener("click", (event) => {
+  if (route.name === "acknowledgements") wireAcknowledgementsPage(main, route);
+  // In-page links in a help article or a policy (#section) scroll instead of changing the app route.
+  if (route.name === "help" || route.name === "acknowledgements") {
+    main.querySelector(".help-article, .ack-reader")?.addEventListener("click", (event) => {
       const link = event.target.closest('a[href^="#"]');
       const id = link?.getAttribute("href").slice(1);
       if (!id || id.startsWith("/")) return;
       event.preventDefault();
       main.querySelector("#" + CSS.escape(id))?.scrollIntoView({ block: "start" });
+    });
+  }
+}
+
+// Confirming posts in the background and paints the done page in the shell.
+function wireAcknowledgementsPage(main, route) {
+  for (const form of main.querySelectorAll('form[method="post"][action="/acknowledgements"]')) {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const body = new URLSearchParams(new FormData(form));
+      body.set("fragment", "1");
+      setButtonBusy(form.querySelector("button[type=submit]"), true, "Saving");
+      renderServerPage(main, route, "/acknowledgements", { method: "POST", body, headers: { accept: "text/html", "content-type": "application/x-www-form-urlencoded" } });
     });
   }
 }
@@ -8656,6 +8691,7 @@ html:has(>body.standalone-page),body.standalone-page{height:auto;overflow:visibl
 .ack-list{display:grid;gap:10px;margin:20px 0 0;padding:0;list-style:none}.ack-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;border:1px solid var(--line);border-radius:11px;background:var(--panel)}.ack-row.done{background:var(--surface-soft)}.ack-row.done .ack-type{background:var(--panel)}.ack-row-main{display:grid;gap:4px;min-width:0}.ack-row-title{color:var(--ink);font-size:17px;font-weight:650;line-height:1.35;text-decoration:none;overflow-wrap:anywhere}a.ack-row-title:hover{text-decoration:underline}.ack-type{display:inline-block;justify-self:start;padding:1px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:700;line-height:18px}.ack-meta{margin:0;color:var(--muted);font-size:14px}.ack-row-status{display:flex;flex:0 0 auto;align-items:center;gap:12px}.ack-empty{margin:22px 0 4px;padding:20px 22px;border:1px solid var(--line);border-radius:11px;background:var(--panel)}.ack-empty h2{margin:0 0 4px;font-size:20px}.ack-empty p{margin:0;color:var(--muted)}
 .ack-back{margin:0 0 18px;font-size:14px}.ack-tags{display:flex;align-items:center;gap:8px;margin:0}.ack-reader-head{max-width:720px;padding-bottom:16px;border-bottom:1px solid var(--line)}.ack-reader{max-width:720px;padding:8px 0 32px;color:var(--ink);font-size:16px;line-height:1.7}.ack-reader h1{margin:1.6em 0 .5em;font-size:26px;line-height:1.25}.ack-reader h2{margin:1.8em 0 .5em;font-size:22px;line-height:1.3}.ack-reader h3,.ack-reader h4{margin:1.5em 0 .4em;font-size:18px;line-height:1.35}.ack-reader p,.ack-reader li{font-size:16px;line-height:1.7}.ack-reader ul,.ack-reader ol{padding-left:1.4em}.ack-reader li+li{margin-top:.3em}.ack-reader a{color:var(--accent)}.ack-reader code{padding:1px 4px;border-radius:3px;background:var(--surface-soft);font-size:.9em}.ack-reader blockquote{margin-left:0;padding:4px 15px;border-left:3px solid var(--accent-light);color:var(--muted)}.ack-reader .table-wrap{overflow-x:auto}.ack-reader table{width:100%;border-collapse:collapse;font-size:14px}.ack-reader th,.ack-reader td{padding:8px;border:1px solid var(--line);text-align:left;vertical-align:top}
 .ack-confirm{position:sticky;bottom:0;z-index:5;margin:0 -24px;padding:14px 24px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--panel);box-shadow:0 -6px 18px rgba(0,0,53,.06)}.ack-confirm p{margin:0 0 10px;color:var(--muted);font-size:14px}.ack-confirm-actions{display:flex;flex-wrap:wrap;gap:10px}.ack-confirm .button{min-height:44px;white-space:normal}.ack-footer{margin:28px 0 40px;color:var(--muted);font-size:14px}.ack-footer a{color:var(--accent)}
+.server-page .ack-page{margin:0;padding:0}
 @media(max-width:620px){.ack-page{padding:20px 16px 0}.ack-head h1,.ack-reader-head h1{font-size:24px}.ack-row{flex-direction:column;align-items:stretch;gap:12px;padding:14px 16px}.ack-row-status{justify-content:space-between}.ack-confirm{margin:0 -16px;padding:12px 16px calc(12px + env(safe-area-inset-bottom))}.ack-confirm-actions .button{flex:1 1 100%}}
 .action-page{max-width:1040px}.action-heading{margin:4px 0 6px;font-size:24px}.action-filters{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:flex-end;margin:14px 0}.action-filters label{display:grid;gap:4px;font-size:12px;font-weight:700}.action-filters select{min-height:40px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink)}.action-filters .action-check{display:flex;align-items:center;gap:8px;min-height:40px}.action-filters .action-check input{width:20px;height:20px}.action-count{color:var(--muted);font-size:13px}
 .action-list{display:grid;gap:10px}.action-card{margin:0;padding:0}.action-card>.action-summary{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;cursor:pointer;list-style:none}.action-card>.action-summary::-webkit-details-marker{display:none}.action-card>.action-summary::before{content:"";flex:0 0 auto;width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(-45deg);transition:transform .15s}.action-card[open]>.action-summary::before{transform:rotate(45deg)}.action-summary-main{flex:1 1 auto;min-width:0}.action-title{display:block;font-size:15.5px;font-weight:600;line-height:1.35}.action-summary-main small{display:block;margin-top:3px;color:var(--muted);font-size:12.5px}.action-tags{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex:0 1 auto}.action-body{padding:2px 18px 18px 40px;border-top:1px solid var(--line)}.action-section h3,.action-respond h3{margin:16px 0 6px;font-size:12px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}.action-section .markdown{max-width:72ch}.action-links{margin:0;padding-left:20px}.action-links li{margin:3px 0;overflow-wrap:anywhere}.action-note{color:var(--muted);font-size:13px}.action-record{margin:0;padding:0;list-style:none;display:grid;gap:8px}.action-record li{padding:8px 12px;border-left:3px solid var(--line);font-size:13px}.action-entry-note{margin-top:3px;white-space:pre-wrap}.action-entry-pending{color:var(--muted);font-style:italic}.action-saved{border-left:3px solid var(--accent)}

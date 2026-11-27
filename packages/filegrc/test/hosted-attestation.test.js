@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import vm from "node:vm";
 import { runCli } from "../src/cli.js";
 import { contentRevision } from "../src/files.js";
 import { signSession } from "../src/hosted-auth.js";
 import { listOwedAttestations } from "../src/resource-mutation.js";
 import { serveWorkspace } from "../src/server.js";
 import { formatCalendarDate } from "../src/time.js";
-import { APP_STYLES, stripDocumentHeader } from "../src/web.js";
+import { APP_SCRIPT, APP_STYLES, stripDocumentHeader } from "../src/web.js";
 import { loadWorkspace } from "../src/workspace.js";
 import { makeComprehensiveWorkspace } from "./fixtures.js";
 import { captureCli } from "./helpers.js";
@@ -208,6 +210,53 @@ test("outside trunk mode an acknowledgement is saved on the decisions branch, ne
   const again = await post();
   assert.equal(again.status, 409);
   assert.equal((await git(remote, ["ls-tree", "-r", "--name-only", "action-decisions"])).split("\n").length, 1);
+});
+
+test("the page opens inside the app: browsers are sent to #/acknowledgements and the app loads a fragment", async (context) => {
+  const { url, as } = await fixture(context);
+  // fetch() sets its own Sec-Fetch-Mode, so a browser navigation needs a raw request.
+  const navigate = (path, cookie) => new Promise((resolve, reject) => {
+    request(`${url}${path}`, { headers: { ...(cookie ? { cookie } : {}), "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" } }, (response) => {
+      response.resume();
+      resolve({ status: response.statusCode, location: response.headers.location });
+    }).on("error", reject).end();
+  });
+  assert.deepEqual(await navigate(`/acknowledgements?item=${TRAINING}`, as(WORKER)), { status: 302, location: `/#/acknowledgements?item=${TRAINING}` });
+  // Signed out, sign-in comes first.
+  assert.doesNotMatch((await navigate("/acknowledgements")).location, /#\/acknowledgements/);
+
+  const list = await (await fetch(`${url}/acknowledgements?fragment=1`, { headers: { cookie: as(WORKER) } })).text();
+  assert.doesNotMatch(list, /<!doctype html>|ack-footer/i);
+  assert.match(list, /^<div class="ack-page">/);
+  assert.match(list, new RegExp(`href="#/acknowledgements\\?item=${TRAINING}"`));
+  const reader = await (await fetch(`${url}/acknowledgements?fragment=1&item=${TRAINING}`, { headers: { cookie: as(WORKER) } })).text();
+  assert.match(reader, /<a href="#\/acknowledgements">&larr; My policies and training<\/a>/);
+  assert.match(reader, /<form class="ack-confirm" method="post" action="\/acknowledgements">/);
+
+  const confirmed = await fetch(`${url}/acknowledgements`, {
+    method: "POST",
+    redirect: "manual",
+    headers: { cookie: as(WORKER), "content-type": "application/x-www-form-urlencoded", "sec-fetch-site": "same-origin" },
+    body: new URLSearchParams({ subjectResourceId: TRAINING, fragment: "1" }).toString()
+  });
+  assert.equal(confirmed.status, 303, await confirmed.text());
+  assert.equal(confirmed.headers.get("location"), `/acknowledgements?done=${TRAINING}&fragment=1`);
+  const done = await (await fetch(`${url}${confirmed.headers.get("location")}`, { headers: { cookie: as(WORKER) } })).text();
+  assert.match(done, /^<div class="ack-page">/);
+  assert.match(done, /You're up to date/);
+  assert.match(done, /<a class="button primary" href="#\/">Back to the overview<\/a>/);
+  // The full page keeps working without the app, with its own way back.
+  const full = await (await fetch(`${url}/acknowledgements`, { headers: { cookie: as(WORKER) } })).text();
+  assert.match(full, /<a class="button primary" href="\/">Back to the overview<\/a>/);
+});
+
+test("the app routes #/acknowledgements only where the server serves the page", () => {
+  const source = APP_SCRIPT.slice(APP_SCRIPT.indexOf("function parseRoute"), APP_SCRIPT.indexOf("function buildNavigation"));
+  const route = (hash, dataset) => JSON.parse(vm.runInNewContext(source + "\nconst r = parseRoute(); JSON.stringify({ name: r.name, params: r.params ? r.params.toString() : null })", {
+    location: { hash }, document: { body: { dataset } }, URLSearchParams
+  }));
+  assert.deepEqual(route(`#/acknowledgements?done=${TRAINING}`, { acknowledgementsHref: "/acknowledgements" }), { name: "acknowledgements", params: `done=${TRAINING}` });
+  assert.equal(route("#/acknowledgements", {}).name, "missing");
 });
 
 test("standalone pages scroll the viewport, not a body that cannot scroll", () => {
