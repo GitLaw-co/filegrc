@@ -245,11 +245,14 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
         if (summary) summary.viewerPersonId = actionPersonId || null;
         return json(response, 200, { exists: view.exists, summary });
       }
-      // A browser opening /actions or /faq directly lands on the same page inside the app.
+      // A browser opening /actions, /faq or (signed in) /acknowledgements directly lands on
+      // the same page inside the app.
       if (request.method === "GET" && isPageNavigation(request) && !url.searchParams.has("fragment")
-        && (url.pathname === ACTIONS_PATH || /^\/faq(?:\/[^/?#]*)?$/.test(url.pathname))) {
+        && (url.pathname === ACTIONS_PATH || (attestingPersonId && url.pathname === "/acknowledgements") || /^\/faq(?:\/[^/?#]*)?$/.test(url.pathname))) {
         const query = new URLSearchParams(url.searchParams);
-        const target = url.pathname === ACTIONS_PATH ? "#/actions" : `#/help${url.pathname.slice(4)}`;
+        const target = url.pathname === ACTIONS_PATH ? "#/actions"
+          : url.pathname === "/acknowledgements" ? "#/acknowledgements"
+            : `#/help${url.pathname.slice(4)}`;
         response.writeHead(302, { location: `/${target}${query.size ? `?${query}` : ""}${url.hash}`, "cache-control": "no-store" });
         return response.end();
       }
@@ -1043,10 +1046,12 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
 
 // A form post redirects back to the page; a JSON `{ record, content }` post
 // gets the created record. Either way the session names the attesting person.
+// A form post from the app shell carries `fragment`, and lands on the fragment page.
 // Unless the workspace is in trunk mode, where the server commits and pushes the
 // authoritative branch itself, the Attestation is saved on the action decisions
 // branch instead, for a reviewed change to add, and counts as done meanwhile.
 async function acknowledgements(input, request, response, url, personId, requestOptions, register) {
+  let fragment = url.searchParams.has("fragment");
   const initial = await loadWorkspace(input);
   const renderer = initial.resources.find(({ type, id }) => type === "renderer-settings" && id === "renderer-settings");
   const aside = renderer?.repositoryMode !== "trunk";
@@ -1091,15 +1096,18 @@ async function acknowledgements(input, request, response, url, personId, request
       }
     }
     const person = byId.get(personId);
-    return text(response, status, renderAcknowledgementsPage({ person, items, completed: [...completed.values()], savedAside: aside, ...extra }), "text/html; charset=utf-8");
+    return text(response, status, renderAcknowledgementsPage({ person, items, completed: [...completed.values()], savedAside: aside, fragment, ...extra }), "text/html; charset=utf-8");
   };
+  const doneLocation = (subjectId) => `/acknowledgements?done=${encodeURIComponent(subjectId)}${fragment ? "&fragment=1" : ""}`;
   if (request.method === "GET") return page(200, { done: url.searchParams.get("done"), item: url.searchParams.get("item") });
   const asJson = String(request.headers["content-type"] || "").startsWith("application/json");
   let subjectId = null;
   try {
+    const form = asJson ? null : new URLSearchParams(await readForm(request));
+    fragment ||= Boolean(form?.has("fragment"));
     const payload = asJson
       ? await readJson(request)
-      : { record: { subjectResourceIds: [new URLSearchParams(await readForm(request)).get("subjectResourceId")] } };
+      : { record: { subjectResourceIds: [form.get("subjectResourceId")] } };
     subjectId = payload.record?.subjectResourceIds?.[0] ?? null;
     const person = (await loadWorkspace(input)).resources.find(({ id }) => id === personId);
     const author = { name: person?.title, email: person?.email };
@@ -1117,7 +1125,7 @@ async function acknowledgements(input, request, response, url, personId, request
       });
       console.log(`[filegrc audit] ${JSON.stringify({ event: "attestation-saved", personId, path: prepared.path, branch: register.branch })}`);
       if (asJson) return json(response, 201, { record: prepared.record, path: prepared.path, branch: register.branch });
-      response.writeHead(303, { location: `/acknowledgements?done=${encodeURIComponent(prepared.record.subjectResourceIds[0])}`, "cache-control": "no-store" });
+      response.writeHead(303, { location: doneLocation(prepared.record.subjectResourceIds[0]), "cache-control": "no-store" });
       return response.end();
     }
     const result = await browserMutation(input, requestOptions, {
@@ -1126,10 +1134,7 @@ async function acknowledgements(input, request, response, url, personId, request
       fastResponse: true
     }, () => completeOwnAttestation(input, personId, payload));
     if (asJson) return json(response, 201, result);
-    response.writeHead(303, {
-      location: `/acknowledgements?done=${encodeURIComponent(result.record.subjectResourceIds[0])}`,
-      "cache-control": "no-store"
-    });
+    response.writeHead(303, { location: doneLocation(result.record.subjectResourceIds[0]), "cache-control": "no-store" });
     return response.end();
   } catch (error) {
     if (asJson) throw error;
