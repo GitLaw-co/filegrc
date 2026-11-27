@@ -45,6 +45,7 @@ const DECIDABLE = new Set(["open", "proposed"]);
 const ACTION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const DECISION_ID = /^[0-9]{8}T[0-9]{9}Z-[a-f0-9]{6}$/;
 const MAX_NOTE_LENGTH = 4000;
+const MAX_OPTION_VALUE_LENGTH = 100;
 const REFRESH_MS = 30_000;
 const PUSH_ATTEMPTS = 3;
 const MAX_QUEUED_WRITES = 20;
@@ -55,6 +56,57 @@ const COMMIT_SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 // Ties an Approve to the exact suggested answer the owner read.
 export function answerRevision(answer) {
   return createHash("sha256").update(String(answer ?? "")).digest("hex").slice(0, 16);
+}
+
+// The choices a decision offers, from the optional `options` field: each entry
+// needs a string `value` and `label`; `detail` and `recommended` are optional.
+// Malformed entries and repeated values are dropped, so a bad file shows fewer
+// choices rather than breaking the page.
+export function actionOptions(action) {
+  if (!Array.isArray(action?.options)) return [];
+  const seenValues = new Set();
+  const options = [];
+  for (const entry of action.options) {
+    if (!entry || typeof entry !== "object") continue;
+    const value = typeof entry.value === "string" ? entry.value.trim() : "";
+    const label = typeof entry.label === "string" ? entry.label.trim() : "";
+    if (!value || !label || value.length > MAX_OPTION_VALUE_LENGTH || seenValues.has(value)) continue;
+    seenValues.add(value);
+    options.push({
+      value,
+      label,
+      ...(typeof entry.detail === "string" && entry.detail.trim() ? { detail: entry.detail.trim() } : {}),
+      ...(entry.recommended === true ? { recommended: true } : {})
+    });
+  }
+  return options;
+}
+
+// The compact tables an action shows on its card, from the optional `tables`
+// field: `{ title?, note?, cols: [string], rows: [[cell] | { col: cell }] }`.
+// Cells are text; anything that is not a string, number or boolean is blank.
+export function actionTables(action) {
+  if (!Array.isArray(action?.tables)) return [];
+  const cell = (value) => (["string", "number", "boolean"].includes(typeof value) ? String(value) : "");
+  return action.tables.filter((table) => table && typeof table === "object" && Array.isArray(table.cols) && table.cols.length && Array.isArray(table.rows))
+    .map((table) => {
+      const cols = table.cols.map(cell);
+      return {
+        ...(typeof table.title === "string" && table.title.trim() ? { title: table.title.trim() } : {}),
+        ...(typeof table.note === "string" && table.note.trim() ? { note: table.note.trim() } : {}),
+        cols,
+        rows: table.rows.filter((row) => row && typeof row === "object")
+          .map((row) => (Array.isArray(row) ? cols.map((_, index) => cell(row[index])) : table.cols.map((name) => cell(row[name]))))
+      };
+    });
+}
+
+// What an Approve is bound to: the suggested answer, and the choices when the
+// action offers some. An action without options keeps answerRevision(suggestedAnswer).
+export function actionAnswerRevision(action) {
+  const options = actionOptions(action);
+  if (!options.length) return answerRevision(action?.suggestedAnswer);
+  return answerRevision(`${action?.suggestedAnswer ?? ""}\u0000${JSON.stringify(options.map(({ value, label, detail }) => [value, label, detail ?? ""]))}`);
 }
 
 // `owner/repo` of a GitHub remote URL (https, ssh or scp form), lowercased; null otherwise.
@@ -384,7 +436,7 @@ export function createActionRegister(input, options = {}) {
     return exclusive(() => decideNow(request), { limit: true });
   }
 
-  async function decideNow({ actionId, outcome, note, viewer, answerRevision: seenAnswer, pullRequestVersions: seenVersions }) {
+  async function decideNow({ actionId, outcome, note, option, viewer, answerRevision: seenAnswer, pullRequestVersions: seenVersions }) {
     if (!DECISION_OUTCOMES.includes(outcome)) throw requestError(400, "Choose a response: approve, done, progress, message or reject.");
     const text = String(note ?? "").replace(/\r\n?/g, "\n").trim();
     if (outcome !== "approved" && !text) {
@@ -405,10 +457,17 @@ export function createActionRegister(input, options = {}) {
     if (!current) throw requestError(404, "That action was not found in the register.");
     if (!DECIDABLE.has(current.status)) throw requestError(409, `${current.id} is already ${current.status}; it no longer needs a decision.`);
     if (!canDecideAction(current, viewer)) throw requestError(403, "Only the action's owner or an admin can decide on it.");
-    if (outcome === "approved" && !String(current.suggestedAnswer ?? "").trim()) {
+    // An action with options is approved by choosing one; the choice goes into the
+    // note, which the register copies into history, and into `option`.
+    const options = actionOptions(current);
+    const chosen = outcome === "approved" && options.length ? options.find(({ value }) => value === String(option ?? "")) : null;
+    if (outcome === "approved" && options.length && !chosen) {
+      throw requestError(400, `Choose one of the options for ${current.id}.`);
+    }
+    if (outcome === "approved" && !options.length && !String(current.suggestedAnswer ?? "").trim()) {
       throw requestError(400, `${current.id} has no suggested answer to approve. Message the agent instead.`);
     }
-    if (outcome === "approved" && seenAnswer !== answerRevision(current.suggestedAnswer)) {
+    if (outcome === "approved" && seenAnswer !== actionAnswerRevision(current)) {
       throw requestError(409, `The suggested answer for ${current.id} changed after you opened the page. Read it again before approving.`);
     }
     // An Approve of an action that links pull requests of this repository covers
@@ -444,8 +503,9 @@ export function createActionRegister(input, options = {}) {
       by: viewer.personId,
       email: viewer.email,
       on,
-      note: text,
+      note: chosen ? `Chose: ${chosen.label}${text ? `\n\n${text}` : ""}` : text,
       ...(outcome === "approved" ? { approvedAnswer: current.suggestedAnswer ?? null } : {}),
+      ...(chosen ? { option: { value: chosen.value, label: chosen.label } } : {}),
       ...(pullRequests.length === 1 ? { pullRequest: pullRequests[0] } : {}),
       ...(pullRequests.length > 1 ? { pullRequests } : {}),
       actionStatusBefore: current.status

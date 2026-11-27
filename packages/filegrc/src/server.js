@@ -1,4 +1,4 @@
-import { observationPeriodStart } from "./action-status.js";
+import { compareActionsByUrgency, observationPeriodStart } from "./action-status.js";
 import { scaffoldPeriodImpactReview, previewPeriodImpactReview, recordPeriodImpactReview } from "./period-impact.js";
 import { scaffoldObligationRuleWithdrawal, previewObligationRuleWithdrawal, withdrawObligationRule } from "./obligation-rule-withdrawal.js";
 import { planWorkQueue, sourceDeadlineValidation } from "./work-queue.js";
@@ -25,7 +25,7 @@ import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
 import { auditorLinkSecretFromEnv, createAuditorView } from "./auditor-view.js";
-import { ACTION_FILTER_KEYS, actionDecisionsBranchFromEnv, actionFilters, answerRevision, canDecideAction, createActionRegister, filterActions, pullRequestVersions, summarizeActions } from "./action-register.js";
+import { ACTION_FILTER_KEYS, actionAnswerRevision, actionDecisionsBranchFromEnv, actionFilters, canDecideAction, createActionRegister, filterActions, pullRequestVersions, summarizeActions } from "./action-register.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -1181,18 +1181,31 @@ async function actions(register, request, response, url, viewer, periodStart = n
   const page = async (status, extra = {}) => {
     const view = await register.view();
     const filters = actionFilters(extra.filterParams ?? url.searchParams, viewer?.personId);
-    const shown = filterActions(view.actions, filters);
+    const today = new Date().toISOString().slice(0, 10);
+    const ordered = (list) => [...list].sort(compareActionsByUrgency(today)).map((action) => ({
+      ...action,
+      canDecide: canDecideAction(action, viewer),
+      answerRevision: actionAnswerRevision(action),
+      ...(action.pullRequests ? { pullRequestVersions: pullRequestVersions(action.pullRequests) } : {})
+    }));
+    // The default "waiting" view also carries the selected person's closed actions
+    // (shown with Show done) and, for the viewer's own list, what waits on others.
+    const waitingView = filters.status === "waiting";
+    const doneActions = waitingView
+      ? filterActions(view.actions, { ...filters, status: "all" }).filter((action) => !["open", "proposed"].includes(action.status))
+      : [];
+    const otherActions = waitingView && viewer?.personId && filters.owner === viewer.personId
+      ? filterActions(view.actions, { ...filters, owner: "" }).filter((action) => action.ownerId !== viewer.personId)
+      : [];
     return text(response, status, renderActionsPage({
       viewer,
       exists: view.exists,
       people: view.people ?? [],
       allActions: view.actions,
-      actions: shown.map((action) => ({
-        ...action,
-        canDecide: canDecideAction(action, viewer),
-        answerRevision: answerRevision(action.suggestedAnswer),
-        ...(action.pullRequests ? { pullRequestVersions: pullRequestVersions(action.pullRequests) } : {})
-      })),
+      actions: ordered(filterActions(view.actions, filters)),
+      doneActions: ordered(doneActions),
+      otherActions: ordered(otherActions),
+      today,
       filters,
       problems: view.problems,
       decided: extra.decided ?? (url.searchParams.get("decided") ? { actionId: url.searchParams.get("decided"), outcome: url.searchParams.get("outcome") } : null),
@@ -1212,7 +1225,7 @@ async function actions(register, request, response, url, viewer, periodStart = n
   try {
     const outcome = { approve: "approved", done: "done", progress: "progress", feedback: "feedback", reject: "rejected" }[form.get("decision")];
     const result = await register.decide({
-      actionId: form.get("actionId"), outcome, note: form.get("note"), answerRevision: form.get("answerRevision"), pullRequestVersions: form.get("pullRequestVersions"), viewer
+      actionId: form.get("actionId"), outcome, note: form.get("note"), option: form.get("option"), answerRevision: form.get("answerRevision"), pullRequestVersions: form.get("pullRequestVersions"), viewer
     });
     console.log(`[filegrc audit] ${JSON.stringify({
       event: "action-decision", personId: viewer.personId, email: viewer.email, actionId: result.decision.actionId,

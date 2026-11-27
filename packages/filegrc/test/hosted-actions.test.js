@@ -7,11 +7,12 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import vm from "node:vm";
-import { actionPullRequests, answerRevision, applyPendingDecisions, actionFilters, createActionRegister, filterActions, githubRepositoryFromRemote, summarizeActions } from "../src/action-register.js";
+import { actionAnswerRevision, actionOptions, actionPullRequests, actionTables, answerRevision, applyPendingDecisions, actionFilters, createActionRegister, filterActions, githubRepositoryFromRemote, summarizeActions } from "../src/action-register.js";
 import { runCli } from "../src/cli.js";
 import { signSession } from "../src/hosted-auth.js";
 import { serveWorkspace } from "../src/server.js";
-import { APP_SCRIPT } from "../src/web.js";
+import { compareActionsByUrgency } from "../src/action-status.js";
+import { APP_SCRIPT, APP_STYLES } from "../src/web.js";
 import { loadWorkspace } from "../src/workspace.js";
 import { makeComprehensiveWorkspace } from "./fixtures.js";
 import { captureCli } from "./helpers.js";
@@ -116,6 +117,14 @@ async function fixture(context, { adminEmails, serve = {} } = {}) {
   return { root, remote, url: running.url, as, decide, page };
 }
 
+// One group of the Actions page: "action-needs", "action-others" or "action-done-group".
+const group = (body, name) => {
+  const start = body.indexOf(`<section class="action-group ${name}"`);
+  if (start === -1) return "";
+  const end = body.indexOf('<section class="action-group ', start + 1);
+  return body.slice(start, end === -1 ? undefined : end);
+};
+
 const decisionFiles = async (remote) => {
   const listing = await git(remote, ["ls-tree", "-r", "--name-only", BRANCH]).catch(() => "");
   return listing ? listing.split("\n") : [];
@@ -128,17 +137,28 @@ test("signed-in people see their own open actions by default and can filter the 
 
   const mine = await page(OWNER);
   assert.equal(mine.status, 200);
-  assert.match(mine.body, /id="ACT-001"/);
-  assert.match(mine.body, /id="ACT-004"/);
-  assert.doesNotMatch(mine.body, /id="ACT-002"/, "another owner's action is filtered out by default");
-  assert.doesNotMatch(mine.body, /id="ACT-003"/, "a done action does not wait for a decision");
-  assert.match(mine.body, /What should ACT-001 say\?/);
-  assert.match(mine.body, /Suggested answer for ACT-001\./);
-  assert.match(mine.body, /<a href="https:\/\/example\.com\/vendor" rel="noopener noreferrer" target="_blank">Vendor page<\/a>/);
-  assert.match(mine.body, /Policy <code>policies\/access\.md<\/code>/);
-  assert.match(mine.body, /aria-current="true">Jordan Lee<\/a>/);
-  assert.match(mine.body, /class="filter-chip" href="[^"]*"[^>]*>Owner: Jordan Lee/);
-  assert.match(mine.body, /Status: Waiting on someone/);
+  const needs = group(mine.body, "action-needs");
+  assert.match(needs, /<h2 class="action-group-title">Needs you <span class="action-group-count">2<\/span><\/h2>/);
+  assert.ok(needs.indexOf('id="ACT-001"') > 0 && needs.indexOf('id="ACT-001"') < needs.indexOf('id="ACT-004"'), "what blocks the period start comes first");
+  assert.doesNotMatch(needs, /id="ACT-00[23]"/);
+  assert.match(group(mine.body, "action-others"), /<summary><strong>Independent Approver<\/strong> · 1<\/summary>[\s\S]*id="ACT-002"/, "another owner's action waits under their name");
+  assert.match(group(mine.body, "action-done-group"), /id="ACT-003"/, "a done action sits behind Show done");
+  assert.match(mine.body, /<input type="checkbox" id="action-show-done" data-show-done> Show done <span class="action-person-count">1<\/span>/);
+  assert.doesNotMatch(mine.body, /id="action-show-done"[^>]*checked/, "Show done starts off");
+  assert.match(mine.body, /<strong>1 of 3 done<\/strong> <span class="action-progress-who">You<\/span>/);
+  assert.match(mine.body, /<span class="impact-tag">1 blocks the period start[^<]*<\/span>/);
+  assert.match(mine.body, /<progress class="action-progress-bar" max="3" value="1">/);
+  // The question is the card's lead; the long answer, evidence and links are Background.
+  const first = mine.body.slice(mine.body.indexOf('id="ACT-001"'), mine.body.indexOf('id="ACT-004"'));
+  assert.match(first, /<div class="action-why markdown"><p>What should ACT-001 say\?<\/p><\/div>/);
+  assert.match(first, /<details class="action-background"><summary>Background<\/summary>[\s\S]*Suggested answer for ACT-001\./);
+  assert.match(first, /<a href="https:\/\/example\.com\/vendor" rel="noopener noreferrer" target="_blank">Vendor page<\/a>/);
+  assert.match(first, /Policy <code>policies\/access\.md<\/code>/);
+  assert.ok(first.indexOf('name="decision" value="approve"') < first.indexOf("action-background"), "Approve sits on the card, before Background");
+  assert.match(mine.body, /aria-current="true">Me <span class="action-person-count" aria-label="2 waiting">2<\/span><\/a>/);
+  assert.match(mine.body, />Everyone <span class="action-person-count" aria-label="3 waiting">3<\/span><\/a>/);
+  assert.match(mine.body, />Independent Approver <span class="action-person-count" aria-label="1 waiting">1<\/span><\/a>/);
+  assert.doesNotMatch(mine.body, /class="filter-chip"/, "the default view has no filter chips");
   assert.match(mine.body, /2 of 4 actions/);
   assert.match(mine.body, /<span class="impact-tag">Blocks [^<]+<\/span><span class="priority-chip">P1<\/span><span class="status-pill tone-blue" data-task-status="to-review">To review<\/span>/);
   assert.doesNotMatch(mine.body, /data-status-word="failing"|>Failing</);
@@ -160,8 +180,14 @@ test("signed-in people see their own open actions by default and can filter the 
   assert.match(search.body, /id="ACT-004"/);
   assert.doesNotMatch(search.body, /id="ACT-001"/);
   assert.match(search.body, /Search: act-004/);
-  assert.match(search.body, /<details class="panel action-card" id="ACT-004" open>/, "a single match opens");
-  assert.doesNotMatch(everyone.body, /<details class="panel action-card" id="[^"]+" open>/, "a list starts closed");
+  assert.match(search.body.slice(search.body.indexOf('id="ACT-004"')), /<details class="action-background" open>/, "a single match opens its Background");
+  assert.doesNotMatch(everyone.body, /<details class="action-background" open>/, "a list starts closed");
+  assert.match(everyone.body, /<h2 class="action-group-title">Actions <span class="action-group-count">4<\/span><\/h2>/);
+  assert.doesNotMatch(everyone.body, /<section class="action-group action-(others|done-group)"|id="action-show-done"/, "an explicit status shows one plain list");
+  assert.match(everyone.body, /class="filter-chip" href="[^"]*"[^>]*>Status: Any/);
+  const theirs = await page(OWNER, `?owner=${OTHER}&status=waiting`);
+  assert.match(group(theirs.body, "action-needs"), /Waiting on Independent Approver[\s\S]*id="ACT-002"/);
+  assert.match(theirs.body, /<strong>0 of 1 done<\/strong> <span class="action-progress-who">Independent Approver<\/span>/);
   assert.match(everyone.body, /aria-label="Filter by type"/);
   const signoffs = await page(OWNER, "?owner=&status=all&type=approval");
   assert.match(signoffs.body, /id="ACT-003"/);
@@ -362,7 +388,8 @@ test("a task is marked done or part done; a decision is approved", async (contex
   const task = body.slice(body.indexOf('id="ACT-004"'));
   const decision = body.slice(body.indexOf('id="ACT-001"'), body.indexOf('id="ACT-004"'));
   assert.match(task, /<span class="action-kind">Task<\/span>/);
-  assert.match(task, /<h3>Steps<\/h3>/);
+  assert.match(task, /<h4>Steps<\/h4>/);
+  assert.match(task, /<label class="button primary" for="ACT-004-pick-done">Mark as done<\/label>/, "Mark as done is the task's primary button");
   for (const value of ["done", "progress", "feedback", "reject"]) assert.match(task, new RegExp(`name="decision" value="${value}"`));
   assert.doesNotMatch(task, /name="decision" value="approve"/, "a task has nothing to approve");
   assert.match(decision, /name="decision" value="approve"/);
@@ -377,9 +404,118 @@ test("a task is marked done or part done; a decision is approved", async (contex
   const after = await page(OWNER, "?owner=&status=all&decided=ACT-004&outcome=done");
   assert.match(after.body, /role="status">Marked as done: ACT-004\./);
   assert.match(after.body.slice(after.body.indexOf('id="ACT-004"')), /<span class="status-pill tone-green-muted" data-task-status="done">Done<\/span>/);
-  assert.doesNotMatch((await page(OWNER)).body, /id="ACT-004"/, "a done task no longer waits");
+  const settled = (await page(OWNER)).body;
+  assert.doesNotMatch(group(settled, "action-needs"), /id="ACT-004"/, "a done task no longer waits");
+  assert.match(group(settled, "action-done-group"), /id="ACT-004"/);
   const outcomes = await Promise.all((await decisionFiles(remote)).map(async (file) => JSON.parse(await git(remote, ["show", `${BRANCH}:${file}`])).outcome));
   assert.deepEqual(outcomes.sort(), ["done", "progress"]);
+});
+
+test("a decision with options is answered by one click on a choice, recorded in the note", async (context) => {
+  const { root, remote, decide, page } = await fixture(context);
+  const options = [
+    { value: "remove", label: "Remove the bypass", detail: "Changes need a second review.", recommended: true },
+    { value: "exception", label: "Keep it as an exception" },
+    { value: "remove", label: "Duplicate value is dropped" },
+    { label: "No value is dropped" }
+  ];
+  const tables = [{
+    title: "Accounts that skip review",
+    note: "Read 26 Nov.",
+    cols: ["Account", "Repository"],
+    rows: [["release-bot", "web-app"], { Account: "<b>ci</b>", Repository: "deploy" }, "not a row"]
+  }];
+  await writeFile(join(root, "actions", "ACT-004.json"), json(action("ACT-004", {
+    why: "A change can reach production **unreviewed**.", options, tables
+  })));
+  const body = (await page(OWNER)).body;
+  const card = body.slice(body.indexOf('id="ACT-004"'));
+  const revision = actionAnswerRevision({ suggestedAnswer: "Suggested answer for ACT-004.", options });
+  assert.notEqual(revision, seen("ACT-004"), "the options are part of what an Approve covers");
+  assert.match(card, /<div class="action-why markdown"><p>A change can reach production <strong>unreviewed<\/strong>\.<\/p><\/div>/);
+  assert.match(card, /<details class="action-background">[\s\S]*<h4>Question<\/h4><div class="markdown"><p>What should ACT-004 say\?/, "the question moves to Background when there is a why");
+  assert.match(card, /<p class="action-table-title">Accounts that skip review<\/p>[\s\S]*<th scope="col">Account<\/th><th scope="col">Repository<\/th>[\s\S]*<td>release-bot<\/td><td>web-app<\/td><\/tr><tr><td>&lt;b&gt;ci&lt;\/b&gt;<\/td><td>deploy<\/td><\/tr><\/tbody>[\s\S]*<p class="action-table-note">Read 26 Nov\.<\/p>/);
+  assert.equal((card.match(/<form class="action-option"/g) ?? []).length, 2);
+  assert.match(card, new RegExp(`<form class="action-option" method="post" action="/actions"><input type="hidden" name="actionId" value="ACT-004"><input type="hidden" name="decision" value="approve"><input type="hidden" name="option" value="remove"><input type="hidden" name="answerRevision" value="${revision}">`));
+  assert.match(card, /<button class="button primary" type="submit">Remove the bypass<\/button><small>Changes need a second review\.<\/small>/);
+  assert.match(card, /<button class="button outline" type="submit">Keep it as an exception<\/button>/);
+  assert.doesNotMatch(card, /class="action-quick"/, "with options there is no plain Approve");
+  assert.ok(card.indexOf("action-table") < card.indexOf("action-option") && card.indexOf("action-option") < card.indexOf("action-background"));
+
+  const noChoice = await decide(OWNER, { actionId: "ACT-004", decision: "approve", answerRevision: revision });
+  assert.equal(noChoice.status, 400);
+  assert.match(await noChoice.text(), /Choose one of the options for ACT-004/);
+  const unknown = await decide(OWNER, { actionId: "ACT-004", decision: "approve", option: "bogus", answerRevision: revision });
+  assert.equal(unknown.status, 400);
+  const stale = await decide(OWNER, { actionId: "ACT-004", decision: "approve", option: "exception", answerRevision: seen("ACT-004") });
+  assert.equal(stale.status, 409, "a page opened before the options changed cannot approve");
+  assert.equal((await decisionFiles(remote)).length, 0);
+
+  const chosen = await decide(OWNER, { actionId: "ACT-004", decision: "approve", option: "exception", note: "The release job needs it.", answerRevision: revision });
+  assert.equal(chosen.status, 303, await chosen.text());
+  const [file] = await decisionFiles(remote);
+  const saved = JSON.parse(await git(remote, ["show", `${BRANCH}:${file}`]));
+  assert.equal(saved.outcome, "approved");
+  assert.equal(saved.note, "Chose: Keep it as an exception\n\nThe release job needs it.");
+  assert.deepEqual(saved.option, { value: "exception", label: "Keep it as an exception" });
+  assert.equal(saved.approvedAnswer, "Suggested answer for ACT-004.");
+  const after = (await page(OWNER)).body;
+  assert.match(group(after, "action-done-group"), /<strong>Approved<\/strong> · Jordan Lee · [^<]+ · <span class="action-entry-pending">not yet in the register<\/span><div class="action-entry-note">Chose: Keep it as an exception/);
+
+  // An action whose only answer is a choice needs no suggested answer.
+  await writeFile(join(root, "actions", "ACT-001.json"), json(action("ACT-001", { suggestedAnswer: "", options: [{ value: "yes", label: "Yes" }] })));
+  const bare = await decide(OWNER, { actionId: "ACT-001", decision: "approve", option: "yes", answerRevision: actionAnswerRevision({ suggestedAnswer: "", options: [{ value: "yes", label: "Yes" }] }) });
+  assert.equal(bare.status, 303, await bare.text());
+
+  // The new fields live in actions/, outside data/, so the workspace stays valid.
+  const validation = await captureCli(runCli, ["validate", "--root", root]);
+  assert.equal(validation.exitCode, 0, validation.stdout + validation.stderr);
+});
+
+test("options and tables are read defensively and an action without them is unchanged", () => {
+  assert.deepEqual(actionOptions({}), []);
+  assert.deepEqual(actionOptions({ options: "yes" }), []);
+  assert.deepEqual(actionOptions({ options: [null, { value: " a ", label: " A ", detail: " ", recommended: "yes" }, { value: "a", label: "Again" }, { value: "b" }, { value: "x".repeat(101), label: "Long" }] }),
+    [{ value: "a", label: "A" }]);
+  assert.deepEqual(actionTables({ tables: [{ cols: [] , rows: [] }, { cols: ["A"] }, { title: " T ", cols: ["A", "B"], rows: [[1, true, "extra"], [null], { B: "b" }] }] }),
+    [{ title: "T", cols: ["A", "B"], rows: [["1", "true"], ["", ""], ["", "b"]] }]);
+  assert.equal(actionAnswerRevision({ suggestedAnswer: "Same." }), answerRevision("Same."));
+  assert.equal(actionAnswerRevision({ suggestedAnswer: "Same.", options: [{ value: "only-label" }] }), answerRevision("Same."), "malformed options leave the revision alone");
+  assert.notEqual(actionAnswerRevision({ suggestedAnswer: "Same.", options: [{ value: "a", label: "A" }] }),
+    actionAnswerRevision({ suggestedAnswer: "Same.", options: [{ value: "a", label: "B" }] }));
+});
+
+test("the Actions page orders by what blocks the period start, then overdue, then priority", () => {
+  const actions = [
+    { id: "ACT-7", status: "done", blocksPeriodStart: true, priority: "p1" },
+    { id: "ACT-6", status: "open", priority: "p1", due: "2026-12-30" },
+    { id: "ACT-5", status: "open", priority: "p3", due: "2026-11-01" },
+    { id: "ACT-4", status: "proposed", priority: "p2", blocksPeriodStart: true, due: "2026-12-20" },
+    { id: "ACT-3", status: "open", priority: "p3", blocksPeriodStart: true, due: "2026-11-02" },
+    { id: "ACT-2", status: "open", priority: "p1", blocksPeriodStart: true, due: "2026-12-10" }
+  ];
+  assert.deepEqual([...actions].sort(compareActionsByUrgency("2026-11-27")).map(({ id }) => id), ["ACT-3", "ACT-2", "ACT-4", "ACT-5", "ACT-6", "ACT-7"]);
+});
+
+test("Show done is a CSS toggle the app remembers per browser", () => {
+  assert.match(APP_STYLES, /\.action-done-group\{display:none\}\.action-page:has\(#action-show-done:checked\) \.action-done-group\{display:block\}/);
+  const wiring = APP_SCRIPT.slice(APP_SCRIPT.indexOf("function wireActionsPage"), APP_SCRIPT.indexOf("function overviewSectionStatus"));
+  const store = new Map();
+  let changed;
+  const checkbox = { checked: false, addEventListener: (type, listener) => { changed = listener; } };
+  const main = { querySelector: (selector) => (selector === "[data-show-done]" ? checkbox : null), querySelectorAll: () => [] };
+  const window = { localStorage: { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) } };
+  const run = () => vm.runInNewContext(`${wiring}\nwireActionsPage(main, {})`, { main, window, location: {}, URLSearchParams, FormData: class {} });
+  run();
+  assert.equal(checkbox.checked, false);
+  checkbox.checked = true;
+  changed();
+  assert.equal(store.get("filegrc.actions.showDone.v1"), "1");
+  checkbox.checked = false;
+  run();
+  assert.equal(checkbox.checked, true, "the next visit starts with Show done ticked");
+  window.localStorage.getItem = () => { throw new Error("blocked"); };
+  assert.doesNotThrow(run, "blocked storage leaves the default");
 });
 
 test("decisions can never be pointed at the authoritative branch", async (context) => {
