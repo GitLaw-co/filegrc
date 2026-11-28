@@ -109,6 +109,7 @@ Hosted mode puts Google sign-in in front of every page and API route. It is off 
 | `FILEGRC_AUDITOR_LINK_SECRET` | Optional. At least 32 random characters used to sign auditor links, so they stay valid across restarts. Unset, each start uses a new key. |
 | `FILEGRC_APP_NAME` | Optional. The name shown in window titles and the sidebar instead of FileGRC, such as `Example Compliance`. |
 | `FILEGRC_ACTION_DECISIONS_BRANCH` | Optional. The branch that action decisions and change suggestions are pushed to. Defaults to `action-decisions`. `main`, `master`, `trunk`, `develop`, the authoritative branch and the checked-out branch are refused. |
+| `FILEGRC_ACTION_REGISTER_BRANCH` | Optional. Read the action register (`actions/`) from this branch of the repository remote instead of the checked-out workspace, fetched with the decisions. Action changes are then committed straight to that branch, with no pull request into the authoritative branch. Must differ from the decisions branch. When the branch is missing, the Actions page shows no register. |
 
 A person can sign in only when Google reports a verified email in the allowed domain and an `active` Person record has the same `email`. Anyone else gets a 403 page and no session. The session is an HMAC-signed `HttpOnly`, `Secure`, `SameSite=Lax` cookie that lasts 8 hours; nothing is stored on disk or under `data/`. Changing `FILEGRC_SESSION_SECRET` signs everyone out. Open `/auth/logout` to sign out.
 

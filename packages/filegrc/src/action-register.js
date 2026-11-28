@@ -22,6 +22,7 @@ export const ACTION_DECISIONS_DIRECTORY = "actions/decisions";
 export const ACTION_SUGGESTIONS_DIRECTORY = "actions/suggestions";
 export const ACTION_PENDING_FILE = "pending.json";
 export const ACTION_DECISIONS_BRANCH_ENV = "FILEGRC_ACTION_DECISIONS_BRANCH";
+export const ACTION_REGISTER_BRANCH_ENV = "FILEGRC_ACTION_REGISTER_BRANCH";
 export const DEFAULT_ACTION_DECISIONS_BRANCH = "action-decisions";
 export const ACTION_STATUSES = ["open", "proposed", "accepted", "rejected", "done", "dropped"];
 export const ACTION_PRIORITIES = ["p1", "p2", "p3"];
@@ -207,6 +208,12 @@ export function actionDecisionsBranchFromEnv(env = process.env) {
   return String(env[ACTION_DECISIONS_BRANCH_ENV] ?? "").trim() || undefined;
 }
 
+// The branch the register is read from instead of the checked-out workspace, so
+// action changes need no pull request into the authoritative branch.
+export function actionRegisterBranchFromEnv(env = process.env) {
+  return String(env[ACTION_REGISTER_BRANCH_ENV] ?? "").trim() || undefined;
+}
+
 // Every `actions/<ID>.json` whose `id` matches its file name. `schema.json` and
 // anything that does not parse are listed as problems instead of being dropped silently.
 export async function loadActionRegister(input) {
@@ -218,14 +225,22 @@ export async function loadActionRegister(input) {
     if (["ENOENT", "ENOTDIR"].includes(error.code)) return { exists: false, actions: [], problems: [] };
     throw error;
   }
+  return parseActionFiles(entries.filter((entry) => entry.isFile())
+    .map(({ name }) => ({ name, read: () => readFile(join(directory, name), "utf8") })));
+}
+
+// The register from the files in actions/, each `{ name, read() }`: from the
+// workspace on disk, or from a branch.
+export async function parseActionFiles(files) {
   const actions = [];
   const problems = [];
-  const names = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json") && !["schema.json", ACTION_PENDING_FILE].includes(entry.name))
-    .map(({ name }) => name).sort();
+  const names = files.map(({ name }) => name)
+    .filter((name) => name.endsWith(".json") && !["schema.json", ACTION_PENDING_FILE].includes(name)).sort();
+  const byName = new Map(files.map((file) => [file.name, file]));
   for (const name of names) {
     const stem = name.slice(0, -".json".length);
     try {
-      const record = JSON.parse(await readFile(join(directory, name), "utf8"));
+      const record = JSON.parse(await byName.get(name).read());
       if (!record || typeof record !== "object" || Array.isArray(record)) throw new Error("it is not a JSON object");
       if (record.id !== stem || !ACTION_ID.test(stem)) throw new Error("its id does not match the file name");
       actions.push(record);
@@ -233,9 +248,7 @@ export async function loadActionRegister(input) {
       problems.push(`${ACTION_DIRECTORY}/${name} was skipped: ${error instanceof SyntaxError ? "it is not valid JSON" : error.message}.`);
     }
   }
-  const pending = entries.some((entry) => entry.isFile() && entry.name === ACTION_PENDING_FILE)
-    ? parsePendingReviews(await readFile(join(directory, ACTION_PENDING_FILE), "utf8"), problems)
-    : [];
+  const pending = byName.has(ACTION_PENDING_FILE) ? parsePendingReviews(await byName.get(ACTION_PENDING_FILE).read(), problems) : [];
   return { exists: true, actions, problems, pending };
 }
 
@@ -415,6 +428,10 @@ export function createActionRegister(input, options = {}) {
   if (PROTECTED_BRANCH_NAMES.has(branch.toLowerCase())) {
     throw new Error(`Action decisions cannot go to "${branch}". Choose a separate branch such as ${DEFAULT_ACTION_DECISIONS_BRANCH}.`);
   }
+  const registerBranch = options.registerBranch ? String(options.registerBranch).trim() : null;
+  if (registerBranch && (!isSafeBranchName(registerBranch) || registerBranch.toLowerCase() === branch.toLowerCase())) {
+    throw new Error(`The action register branch "${registerBranch}" must be a safe Git branch name other than the decisions branch.`);
+  }
   const now = options.now ?? (() => new Date());
   const refreshMs = options.refreshMs ?? REFRESH_MS;
   const configuredRepository = options.pullRequestRepository ? String(options.pullRequestRepository).toLowerCase() : null;
@@ -458,7 +475,49 @@ export function createActionRegister(input, options = {}) {
       // No decision has been saved yet, so the branch does not exist.
       if (!/couldn't find remote ref|could not find remote ref/i.test(error.message)) throw error;
     }
+    if (registerBranch) {
+      // A missing register branch leaves the old tracking ref, if any; loadRegister reports it.
+      await runGitCommand(root, ["fetch", "--no-tags", "--recurse-submodules=no", "--", remote, `+refs/heads/${registerBranch}:${registerRef(remote)}`], {
+        operation: "fetch the action register", timeoutMs: 30_000
+      }).catch((error) => {
+        if (!/couldn't find remote ref|could not find remote ref/i.test(error.message)) throw error;
+      });
+    }
     lastFetchAt = Date.now();
+  }
+
+  const registerRef = (remote) => `refs/remotes/${remote}/${registerBranch}`;
+
+  // The register: from the register branch when one is set, else from the workspace.
+  async function loadRegister(remote) {
+    if (!registerBranch) return loadActionRegister(root);
+    const tip = await runGitCommand(root, ["rev-parse", "--verify", "--quiet", `${registerRef(remote)}^{commit}`], {
+      operation: "find the action register"
+    }).catch(() => "");
+    if (!tip) return { exists: false, actions: [], problems: [`The action register branch "${registerBranch}" was not found.`] };
+    const base = `${await prefix()}${ACTION_DIRECTORY}/`;
+    const listing = await runGitCommand(root, ["ls-tree", "-z", "--full-tree", tip, "--", base], { operation: "list the action register" });
+    const files = [];
+    for (const line of listing.split("\0").filter(Boolean)) {
+      const match = /^100644 blob ([0-9a-f]{40,64})\t(.+)$/.exec(line);
+      if (!match || match[2].slice(base.length).includes("/")) continue;
+      const [, oid, path] = match;
+      files.push({ name: path.slice(base.length), read: () => runGitCommand(root, ["cat-file", "blob", oid], { operation: "read an action" }) });
+    }
+    if (!files.length) return { exists: false, actions: [], problems: [] };
+    return parseActionFiles(files);
+  }
+
+  // Whether the sidebar links to Actions.
+  async function exists() {
+    if (!registerBranch) return (await loadActionRegister(root)).actions.length > 0;
+    try {
+      const { remote, trackingRef } = await repository();
+      await refresh(remote, trackingRef);
+      return (await loadRegister(remote)).actions.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   // `owner/repo` whose pull request links an Approve is bound to: the option when
@@ -550,11 +609,16 @@ export function createActionRegister(input, options = {}) {
 
   // The register with pending decisions applied; a failed fetch keeps the last known decisions.
   async function view() {
-    const register = await loadActionRegister(root);
-    if (!register.exists) return { ...register, decisions: [] };
+    if (!registerBranch) {
+      const local = await loadActionRegister(root);
+      if (!local.exists) return { ...local, decisions: [] };
+    }
     const { loaded, remote, trackingRef } = await repository();
+    const fresh = await refresh(remote, trackingRef);
+    const register = await loadRegister(remote);
+    if (!register.exists) return { ...register, decisions: [] };
     const problems = [...register.problems];
-    if (!await refresh(remote, trackingRef)) {
+    if (!fresh) {
       problems.push("Recent decisions could not be loaded, so some may be missing from this page.");
     }
     const decisions = await readDecisions(trackingRef);
@@ -587,7 +651,7 @@ export function createActionRegister(input, options = {}) {
     if (!viewer?.personId || !viewer.email) throw requestError(403, "Sign in to decide on an action.");
     const { remote, trackingRef } = await repository();
     await fetchBranch(remote, trackingRef);
-    const register = await loadActionRegister(root);
+    const register = await loadRegister(remote);
     const current = applyPendingDecisions(register.actions, await readDecisions(trackingRef))
       .find(({ id }) => id === String(actionId ?? ""));
     if (!current) throw requestError(404, "That action was not found in the register.");
@@ -791,7 +855,7 @@ export function createActionRegister(input, options = {}) {
     }
   }
 
-  return { branch, view, decide, suggest, saveRecord, savedRecords };
+  return { branch, registerBranch, view, exists, decide, suggest, saveRecord, savedRecords };
 }
 
 // The Person's name when Git accepts it as an author name, else their email.

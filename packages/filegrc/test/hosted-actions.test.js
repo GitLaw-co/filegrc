@@ -826,6 +826,40 @@ test("Needs you moves actions an open pull request closes into Done, waiting for
   assert.deepEqual(summary.items.map(({ id }) => id), ["ACT-004"]);
 });
 
+test("with a register branch, the page reads actions from that branch, not the workspace, and decisions still apply", async (context) => {
+  const { root, remote, url, as, page, decide } = await fixture(context, { serve: { actionRegisterBranch: "actions", actionRefreshMs: 0 } });
+  // The branch holds a newer register: ACT-001 has new wording and ACT-009 exists only there.
+  await git(root, ["switch", "-c", "actions"]);
+  await writeFile(join(root, "actions", "ACT-001.json"), json(action("ACT-001", { title: "Wording from the actions branch", priority: "p1", blocksPeriodStart: true })));
+  await writeFile(join(root, "actions", "ACT-009.json"), json(action("ACT-009", { title: "Only on the actions branch" })));
+  await git(root, ["add", "actions"]);
+  await git(root, ["commit", "-m", "Update the register without a pull request"]);
+  await git(root, ["push", "origin", "actions"]);
+  await git(root, ["switch", "main"]);
+  await git(root, ["reset", "--hard"]);
+
+  const shown = await page(OWNER);
+  assert.match(shown.body, /Wording from the actions branch/);
+  assert.match(shown.body, /id="ACT-009"/);
+  assert.doesNotMatch(shown.body, /Question ACT-001/, "the workspace copy is not shown");
+  assert.equal(await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]), "main", "the checked-out branch is untouched");
+
+  const response = await decide(OWNER, { actionId: "ACT-009", decision: "approve", answerRevision: seen("ACT-009"), owner: "", status: "all" });
+  assert.equal(response.status, 303);
+  const after = await page(OWNER, "?owner=&status=all");
+  assert.match(after.body, /id="ACT-009"[\s\S]*?Approved/);
+  assert.equal(await git(remote, ["rev-parse", "main"]), await git(root, ["rev-parse", "main"]), "main never moves");
+
+  const index = await fetch(url, { headers: { cookie: as(OWNER) } });
+  assert.match(await index.text(), /href="[^"]*actions/, "the sidebar links to Actions");
+});
+
+test("a missing register branch shows no register", async (context) => {
+  const { page } = await fixture(context, { serve: { actionRegisterBranch: "actions", actionRefreshMs: 0 } });
+  const shown = await page(OWNER);
+  assert.doesNotMatch(shown.body, /id="ACT-001"/);
+});
+
 test("Actions opens inside the app: browsers are sent to #/actions and the app loads a fragment", async (context) => {
   const { url, as, decide } = await fixture(context);
   // fetch() sets its own Sec-Fetch-Mode, so a browser navigation needs a raw request.
