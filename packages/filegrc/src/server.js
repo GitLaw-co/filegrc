@@ -25,7 +25,7 @@ import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
 import { auditorLinkSecretFromEnv, createAuditorView } from "./auditor-view.js";
-import { ACTION_FILTER_KEYS, actionAnswerRevision, actionDecisionsBranchFromEnv, actionFilters, canDecideAction, createActionRegister, filterActions, pullRequestVersions, summarizeActions } from "./action-register.js";
+import { ACTION_FILTER_KEYS, actionAnswerRevision, actionDecisionsBranchFromEnv, actionFilters, canDecideAction, createActionRegister, filterActions, isActionBlocked, pullRequestVersions, summarizeActions } from "./action-register.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -1197,12 +1197,17 @@ async function actions(register, request, response, url, viewer, periodStart = n
     const otherActions = waitingView && viewer?.personId && filters.owner === viewer.personId
       ? filterActions(view.actions, { ...filters, owner: "" }).filter((action) => action.ownerId !== viewer.personId)
       : [];
+    // In the waiting view, actions blocked by what they wait on leave the main list
+    // for a collapsed Blocked group under it.
+    const matching = filterActions(view.actions, filters);
+    const blockedActions = waitingView ? matching.filter(isActionBlocked) : [];
     return text(response, status, renderActionsPage({
       viewer,
       exists: view.exists,
       people: view.people ?? [],
       allActions: view.actions,
-      actions: ordered(filterActions(view.actions, filters)),
+      actions: ordered(waitingView ? matching.filter((action) => !isActionBlocked(action)) : matching),
+      blockedActions: ordered(blockedActions),
       doneActions: ordered(doneActions),
       otherActions: ordered(otherActions),
       today,
