@@ -25,7 +25,7 @@ import { applyApplicabilityReviewWithContext, planApplicabilityReview } from "./
 import { applyCollectionReview, planCollectionReview } from "./collection-review.js";
 import { generateEvidencePacket, prepareEvidencePacket } from "./evidence-packet.js";
 import { auditorLinkSecretFromEnv, createAuditorView } from "./auditor-view.js";
-import { ACTION_FILTER_KEYS, actionAnswerRevision, actionDecisionsBranchFromEnv, actionFilters, canDecideAction, createActionRegister, filterActions, isActionAwaitingReview, isActionBlocked, pullRequestVersions, summarizeActions } from "./action-register.js";
+import { ACTION_FILTER_KEYS, actionAnswerRevision, actionDecisionsBranchFromEnv, actionFilters, actionRegisterBranchFromEnv, canDecideAction, createActionRegister, filterActions, isActionAwaitingReview, isActionBlocked, pullRequestVersions, summarizeActions } from "./action-register.js";
 import { FAVICON_PNG, LOGO_MARK_PNG } from "./favicon.js";
 import {
   addEvidenceAttachment,
@@ -132,7 +132,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
   const hostedAuth = options.hostedAuth ? createHostedAuth(input, options.hostedAuth) : null;
   const helpRoot = join(resolveWorkspaceRoot(input), "faq");
   const auditorView = createAuditorView(input, { secret: options.auditorSecret, now: options.now });
-  const actionRegister = createActionRegister(input, { decisionsBranch: options.actionDecisionsBranch, refreshMs: options.actionRefreshMs, pullRequestRepository: options.actionPullRequestRepository });
+  const actionRegister = createActionRegister(input, { decisionsBranch: options.actionDecisionsBranch, registerBranch: options.actionRegisterBranch, refreshMs: options.actionRefreshMs, pullRequestRepository: options.actionPullRequestRepository });
   // Locally, auditor links open on their own read-only listener, started with the
   // first link, so auditors never reach this editing server's routes. In hosted
   // mode the main server answers /auditor/ itself, behind the public URL.
@@ -1024,7 +1024,7 @@ export function createFilegrcServer(input = process.cwd(), options = {}) {
       }
       if (request.method === "GET" && !url.pathname.startsWith("/api/")) {
         const helpHref = (await helpPages(helpRoot)).length ? "/faq" : null;
-        const actionsHref = (await actionRegisterExists(input)) ? ACTIONS_PATH : null;
+        const actionsHref = (await actionRegister.exists()) ? ACTIONS_PATH : null;
         // Every signed-in person has an acknowledgements page; only admins can issue auditor links.
         const acknowledgementsHref = hostedAuth ? "/acknowledgements" : null;
         const auditorLinksHref = hostedAuth && await hostedAuth.admin(request) ? AUDITOR_LINKS_PATH : null;
@@ -1163,14 +1163,6 @@ async function actionViewer(input, hostedAuth, request, personId) {
 // A top-level browser navigation, as opposed to the app's own fetch of a page fragment.
 function isPageNavigation(request) {
   return request.headers["sec-fetch-mode"] === "navigate" && request.headers["sec-fetch-dest"] !== "iframe";
-}
-
-async function actionRegisterExists(input) {
-  try {
-    return (await readdir(join(resolveWorkspaceRoot(input), "actions"))).some((name) => name.endsWith(".json") && !["schema.json", "pending.json"].includes(name));
-  } catch {
-    return false;
-  }
 }
 
 // Everyone signed in can read the register; only the owner or an admin can
@@ -1354,6 +1346,7 @@ export async function serveWorkspace(input = process.cwd(), options = {}) {
     auditorHost: host,
     auditorSecret,
     actionDecisionsBranch: options.actionDecisionsBranch ?? actionDecisionsBranchFromEnv(options.env ?? process.env),
+    actionRegisterBranch: options.actionRegisterBranch ?? actionRegisterBranchFromEnv(options.env ?? process.env),
     actionPullRequestRepository: options.actionPullRequestRepository,
     allowNonAuthoritativeWrites: options.allowNonAuthoritativeWrites === true,
     backgroundPushDelayMs: options.backgroundPushDelayMs,
