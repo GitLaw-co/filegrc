@@ -20,6 +20,7 @@ import { loadWorkspace } from "./workspace.js";
 export const ACTION_DIRECTORY = "actions";
 export const ACTION_DECISIONS_DIRECTORY = "actions/decisions";
 export const ACTION_SUGGESTIONS_DIRECTORY = "actions/suggestions";
+export const ACTION_PENDING_FILE = "pending.json";
 export const ACTION_DECISIONS_BRANCH_ENV = "FILEGRC_ACTION_DECISIONS_BRANCH";
 export const DEFAULT_ACTION_DECISIONS_BRANCH = "action-decisions";
 export const ACTION_STATUSES = ["open", "proposed", "accepted", "rejected", "done", "dropped"];
@@ -134,6 +135,7 @@ export function resolveWaitingOn(actions) {
   const resolved = actions.map((action) => {
     const blockedBy = [];
     if (DECIDABLE.has(action.status)) {
+      if (action.pendingReview) blockedBy.push({ review: action.pendingReview });
       if (action.waitingOn !== undefined && action.waitingOn !== null && !Array.isArray(action.waitingOn)) {
         problems.push(`${action.id} has a waitingOn that is not a list, so it is not treated as blocked.`);
       }
@@ -153,6 +155,11 @@ export function resolveWaitingOn(actions) {
     return { ...action, blockedBy };
   });
   return { actions: resolved, problems };
+}
+
+// Done or dropped in an open pull request that waits for approval.
+export function isActionAwaitingReview(action) {
+  return isActionBlocked(action) && action.blockedBy.some((entry) => entry.review);
 }
 
 export function isActionBlocked(action) {
@@ -213,7 +220,7 @@ export async function loadActionRegister(input) {
   }
   const actions = [];
   const problems = [];
-  const names = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json") && entry.name !== "schema.json")
+  const names = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json") && !["schema.json", ACTION_PENDING_FILE].includes(entry.name))
     .map(({ name }) => name).sort();
   for (const name of names) {
     const stem = name.slice(0, -".json".length);
@@ -226,7 +233,64 @@ export async function loadActionRegister(input) {
       problems.push(`${ACTION_DIRECTORY}/${name} was skipped: ${error instanceof SyntaxError ? "it is not valid JSON" : error.message}.`);
     }
   }
-  return { exists: true, actions, problems };
+  const pending = entries.some((entry) => entry.isFile() && entry.name === ACTION_PENDING_FILE)
+    ? parsePendingReviews(await readFile(join(directory, ACTION_PENDING_FILE), "utf8"), problems)
+    : [];
+  return { exists: true, actions, problems, pending };
+}
+
+// actions/pending.json, written by whoever can see open pull requests (FileGRC
+// itself never calls GitHub): actions that an open pull request marks done or
+// dropped, and who that pull request waits for.
+//   { "generatedAt": "<ISO>", "entries": [{ "actionId", "status": "done"|"dropped",
+//     "pullRequest": { "number", "url" }, "waitingFor": "<Person ID>"? }] }
+// A malformed file or entry is skipped and reported.
+export function parsePendingReviews(source, problems = []) {
+  let parsed;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    problems.push(`${ACTION_DIRECTORY}/${ACTION_PENDING_FILE} was skipped: it is not valid JSON.`);
+    return [];
+  }
+  if (!Array.isArray(parsed?.entries)) {
+    problems.push(`${ACTION_DIRECTORY}/${ACTION_PENDING_FILE} was skipped: it has no entries list.`);
+    return [];
+  }
+  const pending = [];
+  for (const entry of parsed.entries) {
+    const number = entry?.pullRequest?.number;
+    const url = typeof entry?.pullRequest?.url === "string" && /^https:\/\//.test(entry.pullRequest.url) ? entry.pullRequest.url : null;
+    if (typeof entry?.actionId !== "string" || !["done", "dropped"].includes(entry.status) || !Number.isInteger(number) || number < 1) {
+      problems.push(`An entry in ${ACTION_DIRECTORY}/${ACTION_PENDING_FILE} was skipped: it needs actionId, status done or dropped, and a pull request number.`);
+      continue;
+    }
+    pending.push({
+      actionId: entry.actionId,
+      status: entry.status,
+      pullRequest: { number, url },
+      waitingFor: typeof entry.waitingFor === "string" && entry.waitingFor.trim() ? entry.waitingFor.trim() : null
+    });
+  }
+  return pending;
+}
+
+// Marks each open or proposed action that an open pull request closes with
+// `pendingReview`, so the page can show it as done and waiting for approval. An
+// entry for an action that is already closed is stale and ignored; one for an
+// action not in the register is reported.
+export function applyPendingReviews(actions, pending = []) {
+  const byId = new Map(pending.map((entry) => [entry.actionId, entry]));
+  const known = new Set(actions.map(({ id }) => id));
+  const problems = [...byId.keys()].filter((id) => !known.has(id))
+    .map((id) => `${ACTION_DIRECTORY}/${ACTION_PENDING_FILE} names ${id}, which is not in the register.`);
+  const marked = actions.map((action) => {
+    const entry = byId.get(action.id);
+    if (!entry || !DECIDABLE.has(action.status)) return action;
+    const { actionId, ...review } = entry;
+    return { ...action, pendingReview: review };
+  });
+  return { actions: marked, problems };
 }
 
 // A pending decision stops counting once the register has caught up with it: the
@@ -328,7 +392,9 @@ export function summarizeActions(actions, { viewerPersonId = null, today = new D
       toReviewEveryone: waiting.filter((action) => action.status === "proposed").length,
       dueSoonEveryone: dueSoon(waiting),
       blocked: blockedMine.length,
-      blockedEveryone: blockedAll.length
+      blockedEveryone: blockedAll.length,
+      awaitingReview: blockedMine.filter(isActionAwaitingReview).length,
+      awaitingReviewEveryone: blockedAll.filter(isActionAwaitingReview).length
     },
     items: mine.slice(0, limit).map(({ id, title, ownerId, status, priority, due, blocksPeriodStart, kind }) => ({
       id, title, ownerId, status, priority, due, kind, blocksPeriodStart: blocksPeriodStart === true,
@@ -495,8 +561,9 @@ export function createActionRegister(input, options = {}) {
     const people = loaded.resources.filter(({ type }) => type === "person");
     // Blocking is worked out after pending decisions apply, so a dependency marked
     // done on this page releases what waits on it straight away.
-    const waiting = resolveWaitingOn(applyPendingDecisions(register.actions, decisions));
-    problems.push(...waiting.problems);
+    const reviews = applyPendingReviews(applyPendingDecisions(register.actions, decisions), register.pending);
+    const waiting = resolveWaitingOn(reviews.actions);
+    problems.push(...reviews.problems, ...waiting.problems);
     const actions = await withPullRequests(waiting.actions, remote, problems);
     return { exists: true, actions, problems, decisions, people };
   }

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import vm from "node:vm";
-import { actionAnswerRevision, actionOptions, actionPullRequests, actionTables, answerRevision, applyPendingDecisions, actionFilters, actionWaitingOn, createActionRegister, filterActions, githubRepositoryFromRemote, resolveWaitingOn, summarizeActions } from "../src/action-register.js";
+import { actionAnswerRevision, actionOptions, actionPullRequests, actionTables, answerRevision, applyPendingDecisions, actionFilters, actionWaitingOn, applyPendingReviews, createActionRegister, filterActions, githubRepositoryFromRemote, parsePendingReviews, resolveWaitingOn, summarizeActions } from "../src/action-register.js";
 import { runCli } from "../src/cli.js";
 import { signSession } from "../src/hosted-auth.js";
 import { serveWorkspace } from "../src/server.js";
@@ -676,7 +676,7 @@ test("the overview summary counts the signed-in person's waiting actions, or eve
     action("D", { status: "done" })
   ], { viewerPersonId: OWNER, today: "2026-11-03" });
   assert.equal(summary.scope, "viewer");
-  assert.deepEqual(summary.counts, { waiting: 2, blocking: 1, overdue: 1, waitingEveryone: 3, blockingEveryone: 2, overdueEveryone: 1, toReview: 2, toReviewEveryone: 3, dueSoonEveryone: 0, blocked: 0, blockedEveryone: 0 });
+  assert.deepEqual(summary.counts, { waiting: 2, blocking: 1, overdue: 1, waitingEveryone: 3, blockingEveryone: 2, overdueEveryone: 1, toReview: 2, toReviewEveryone: 3, dueSoonEveryone: 0, blocked: 0, blockedEveryone: 0, awaitingReview: 0, awaitingReviewEveryone: 0 });
   assert.deepEqual(summary.items.map(({ id, overdue }) => [id, overdue]), [["A", true], ["B", false]]);
   assert.equal(summarizeActions([action("B", { due: "2026-12-01" })], { today: "2026-11-17" }).counts.dueSoonEveryone, 1);
   assert.equal(summarizeActions([action("B", { due: "2026-12-01" })], { today: "2026-11-16" }).counts.dueSoonEveryone, 0);
@@ -768,6 +768,62 @@ test("Needs you moves blocked actions into a closed Blocked group and every card
   assert.equal(summary.counts.waiting, 2);
   assert.equal(summary.counts.blocked, 2);
   assert.deepEqual(summary.items.map(({ id }) => id), ["ACT-001", "ACT-006"]);
+});
+
+test("pending.json marks open actions an open pull request closes, and stale or bad entries do not", () => {
+  const problems = [];
+  const pending = parsePendingReviews(json({ generatedAt: "2026-11-28T07:30:00Z", entries: [
+    { actionId: "A", status: "done", pullRequest: { number: 214, url: "https://github.com/o/r/pull/214" }, waitingFor: "person-ankit" },
+    { actionId: "B", status: "dropped", pullRequest: { number: 7, url: "javascript:alert(1)" } },
+    { actionId: "C", status: "accepted", pullRequest: { number: 8 } },
+    { actionId: "D", status: "done", pullRequest: { number: 9 } },
+    { actionId: "ACT-404", status: "done", pullRequest: { number: 10 } }
+  ] }), problems);
+  assert.deepEqual(pending.slice(0, 2), [
+    { actionId: "A", status: "done", pullRequest: { number: 214, url: "https://github.com/o/r/pull/214" }, waitingFor: "person-ankit" },
+    { actionId: "B", status: "dropped", pullRequest: { number: 7, url: null }, waitingFor: null }
+  ]);
+  assert.equal(pending.length, 4);
+  assert.equal(problems.length, 1, "an entry with a status other than done or dropped is skipped");
+  assert.deepEqual(parsePendingReviews("{", []), []);
+
+  const { actions, problems: stale } = applyPendingReviews([action("A"), action("B", { status: "open" }), action("D", { status: "done" })], pending);
+  assert.deepEqual(stale, ["actions/pending.json names ACT-404, which is not in the register."]);
+  assert.equal(actions[0].pendingReview.waitingFor, "person-ankit");
+  assert.equal(actions[1].pendingReview.status, "dropped");
+  assert.equal(actions[2].pendingReview, undefined, "an action already closed on main ignores its entry");
+
+  const summary = summarizeActions(resolveWaitingOn(actions).actions, { viewerPersonId: OWNER, today: "2026-11-03" });
+  assert.equal(summary.counts.waiting, 0);
+  assert.equal(summary.counts.awaitingReview, 2);
+  assert.equal(summary.counts.blocked, 2);
+});
+
+test("Needs you moves actions an open pull request closes into Done, waiting for approval", async (context) => {
+  const { root, url, as, page } = await fixture(context);
+  await writeFile(join(root, "actions", "pending.json"), json({ generatedAt: "2026-11-28T07:30:00Z", entries: [
+    { actionId: "ACT-001", status: "done", pullRequest: { number: 214, url: "https://github.com/GitLaw-co/compliance/pull/214" }, waitingFor: OTHER },
+    { actionId: "ACT-003", status: "done", pullRequest: { number: 99 } }
+  ] }));
+  await writeFile(join(root, "actions", "ACT-005.json"), json(action("ACT-005", { waitingOn: [{ label: "Sprinto" }] })));
+
+  const mine = await page(OWNER);
+  assert.doesNotMatch(mine.body, /pending\.json was skipped|ACT-003, which/, "pending.json is not read as an action, and a closed action's entry is ignored quietly");
+  const needs = group(mine.body, "action-needs");
+  assert.match(needs, /<h2 class="action-group-title">Needs you <span class="action-group-count">1<\/span><\/h2>/);
+  const [list, review, blocked] = needs.split('<details class="action-blocked-group">');
+  assert.match(list, /id="ACT-004"/);
+  assert.doesNotMatch(list, /id="ACT-001"/);
+  assert.match(review, /^<summary><strong>Done, waiting for approval<\/strong> · 1<\/summary>/);
+  assert.match(review, /id="ACT-001"[\s\S]*<p class="action-waiting-on">Done — waiting for [^<]+ in <a href="https:\/\/github\.com\/GitLaw-co\/compliance\/pull\/214">#214<\/a><\/p>/);
+  assert.doesNotMatch(review, /Waiting on:/);
+  assert.match(blocked, /^<summary><strong>Blocked<\/strong> · 1<\/summary>[\s\S]*id="ACT-005"/);
+
+  const response = await fetch(`${url}/api/actions/summary`, { headers: { cookie: as(OWNER) } });
+  const { summary } = await response.json();
+  assert.equal(summary.counts.waiting, 1);
+  assert.equal(summary.counts.awaitingReview, 1);
+  assert.deepEqual(summary.items.map(({ id }) => id), ["ACT-004"]);
 });
 
 test("Actions opens inside the app: browsers are sent to #/actions and the app loads a fragment", async (context) => {

@@ -16,7 +16,7 @@ import { HOSTED_AUTOMATION, OPERATING_HOSTED_AUTOMATION } from "./hosted-automat
 import { PROGRAM_PATH, programPathForModel, RESOURCE_INSTRUCTIONS, RESOURCE_OUTPUTS, RESOURCE_PAGE_SUMMARIES } from "./program-path.js";
 import { formatCalendarDate, formatLocalDateTime } from "./time.js";
 import { escapeHtml, renderMarkdown } from "./markdown.js";
-import { ACTION_FILTER_KEYS, ACTION_KIND_LABELS, actionOptions, actionTables, isActionBlocked } from "./action-register.js";
+import { ACTION_FILTER_KEYS, ACTION_KIND_LABELS, actionOptions, actionTables, isActionAwaitingReview, isActionBlocked } from "./action-register.js";
 import { CONTROL_AREA_FUNCTIONS, CONTROL_AREA_RULES, CONTROL_AREAS } from "./control-areas.js";
 import { NAV_GROUPS, NAV_ICONS } from "./navigation.js";
 import { STATUS_WORD_FUNCTIONS, STATUS_WORDS } from "./status-words.js";
@@ -294,8 +294,10 @@ const ACTION_OUTCOME_LABELS = { approved: "Approved", done: "Marked as done", pr
 // each response is a plain POST form. The app shows the page at #/actions and wires
 // those forms to fetch; without JavaScript every link and form still works, and
 // Show done is a CSS toggle. In the waiting view, actions blocked by what they
-// wait on (`waitingOn`) sit in a collapsed Blocked group under the main list.
-export function renderActionsPage({ viewer = null, exists = true, people = [], allActions = [], actions = [], blockedActions = [], doneActions = [], otherActions = [], filters = {}, problems = [], decided = null, error = null, fragment = false, periodStart = null, today = new Date().toISOString().slice(0, 10) }) {
+// wait on (`waitingOn`) sit in a collapsed Blocked group under the main list, and
+// those an open pull request marks done (`actions/pending.json`) in a collapsed
+// "Done, waiting for approval" group.
+export function renderActionsPage({ viewer = null, exists = true, people = [], allActions = [], actions = [], blockedActions = [], reviewActions = [], doneActions = [], otherActions = [], filters = {}, problems = [], decided = null, error = null, fragment = false, periodStart = null, today = new Date().toISOString().slice(0, 10) }) {
   // As a fragment the page lives in the app shell at #/actions, so its links stay there.
   const base = fragment ? "#/actions" : "/actions";
   const personName = (id) => people.find((person) => person.id === id)?.title || id || "Nobody";
@@ -345,7 +347,7 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
     ${keys.filter((key) => key !== "q").map((key) => `<input type="hidden" name="${key}" value="${escapeHtml(filters[key] ?? "")}">`).join("")}
     <div class="filter-buttons">${menus.map(menu).join("")}</div>
     ${showDone}
-    <span class="filter-count">${actions.length + blockedActions.length} of ${allActions.length} actions</span>
+    <span class="filter-count">${actions.length + blockedActions.length + reviewActions.length} of ${allActions.length} actions</span>
   </form>
   ${chips.length ? `<div class="filter-chips">${chips.join("")}<a class="filter-clear" href="${href({ q: "", status: "waiting", priority: "", type: "", blocks: "" })}">Clear all</a></div>` : ""}</div>`;
 
@@ -365,7 +367,7 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
   const decidedNotice = decided?.actionId
     ? `<p class="panel action-saved" role="status">${escapeHtml({ approved: "Approved", done: "Marked as done:", progress: "Progress saved for", feedback: "Message sent to the agent for", rejected: "Rejected" }[decided.outcome] || "Saved")} ${escapeHtml(decided.actionId)}. ${escapeHtml({ approved: "When the agent next files responses, it carries it out and opens a pull request for you to merge.", done: "It goes into the register when someone next asks the agent to file responses.", progress: "The action stays open for the remaining steps.", feedback: "The agent answers by updating the action when someone next asks it to file responses.", rejected: "The reason goes into the register when someone next asks the agent to file responses." }[decided.outcome] || "")}</p>`
     : "";
-  const single = actions.length === 1 && !blockedActions.length && !doneActions.length && !otherActions.length;
+  const single = actions.length === 1 && !blockedActions.length && !reviewActions.length && !doneActions.length && !otherActions.length;
   const actionHref = (id) => `${base}?${escapeHtml(new URLSearchParams({ q: id, owner: "", status: "all" }).toString())}`;
   const card = (action) => actionCard(action, { personName, hidden, viewer, today, periodStart, actionHref, open: single || action.id === decided?.actionId });
   const group = (className, title, count, inner) => `<section class="action-group ${className}"><h2 class="action-group-title">${escapeHtml(title)} <span class="action-group-count">${count}</span></h2>${inner}</section>`;
@@ -376,10 +378,10 @@ export function renderActionsPage({ viewer = null, exists = true, people = [], a
   const emptyMain = waitingView && owner && owner === viewerId && !filters.q && !filters.priority && !filters.type && !filters.blocks
     ? `<p class="empty">Nothing needs you right now.</p>`
     : `<p class="empty">No actions match these filters. <a href="${base}?owner=&amp;status=all">Show all actions</a></p>`;
-  const blockedGroup = blockedActions.length
-    ? `<details class="action-blocked-group"${blockedActions.some((action) => action.id === decided?.actionId) ? " open" : ""}><summary><strong>Blocked</strong> · ${blockedActions.length}</summary><div class="action-list">${blockedActions.map(card).join("\n")}</div></details>`
+  const setAside = (list, title) => list.length
+    ? `<details class="action-blocked-group"${list.some((action) => action.id === decided?.actionId) ? " open" : ""}><summary><strong>${title}</strong> · ${list.length}</summary><div class="action-list">${list.map(card).join("\n")}</div></details>`
     : "";
-  const main = group("action-needs", mainTitle, actions.length, `${actions.length ? `<div class="action-list">${actions.map(card).join("\n")}</div>` : emptyMain}${blockedGroup}`);
+  const main = group("action-needs", mainTitle, actions.length, `${actions.length ? `<div class="action-list">${actions.map(card).join("\n")}</div>` : emptyMain}${setAside(reviewActions, "Done, waiting for approval")}${setAside(blockedActions, "Blocked")}`);
 
   const byOwner = new Map();
   for (const action of otherActions) {
@@ -484,8 +486,13 @@ function actionCard(action, { personName, hidden, viewer, today, periodStart = n
   const why = typeof action.why === "string" && action.why.trim() ? action.why : null;
   const lead = why ?? (action.question ? String(action.question) : "");
   const short = (text) => (text.length > 60 ? `${text.slice(0, 59).trimEnd()}…` : text);
-  const waitingOn = isActionBlocked(action)
-    ? `<p class="action-waiting-on">Waiting on: ${action.blockedBy.map((entry) => entry.action
+  const review = action.blockedBy?.find((entry) => entry.review)?.review;
+  const reviewLine = isActionAwaitingReview(action)
+    ? `<p class="action-waiting-on">${review.status === "dropped" ? "Dropped" : "Done"} — waiting for ${escapeHtml(review.waitingFor ? personName(review.waitingFor) : "approval")} in ${review.pullRequest.url ? `<a href="${escapeHtml(review.pullRequest.url)}">#${review.pullRequest.number}</a>` : `#${review.pullRequest.number}`}</p>`
+    : "";
+  const others = isActionBlocked(action) ? action.blockedBy.filter((entry) => !entry.review) : [];
+  const waitingOn = others.length
+    ? `<p class="action-waiting-on">Waiting on: ${others.map((entry) => entry.action
       ? `${actionHref ? `<a href="${actionHref(entry.action)}">${escapeHtml(entry.action)}</a>` : escapeHtml(entry.action)} ${escapeHtml(short(String(entry.title ?? "")))}`
       : `${escapeHtml(entry.label)}${entry.until ? ` <span class="action-waiting-until">(until ${escapeHtml(entry.until)})</span>` : ""}`).join("; ")}</p>`
     : "";
@@ -539,7 +546,7 @@ function actionCard(action, { personName, hidden, viewer, today, periodStart = n
   ].join("");
   return `<article class="panel action-card${waiting ? "" : " is-closed"}" id="${id}">
     <header class="action-card-head"><div class="action-card-main"><h3 class="action-title">${escapeHtml(action.title || action.id)}</h3><p class="action-meta">${meta}</p></div><div class="action-tags">${tags}</div></header>
-    ${waitingOn}
+    ${reviewLine}${waitingOn}
     ${lead ? `<div class="action-why markdown">${renderMarkdown(lead)}</div>` : ""}
     ${tables}
     ${respond}
